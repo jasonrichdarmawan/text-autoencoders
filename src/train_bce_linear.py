@@ -1,3 +1,12 @@
+"""
+This code trains a linear probe to predict which tokens appear in a text based on its SONAR embedding. It:
+Loads text embeddings and their corresponding texts
+Creates binary labels for token presence/absence
+Trains a PyTorch linear classifier with BCE loss
+Evaluates performance using metrics like F1 score
+Visualizes results with frequency vs. performance plots
+"""
+
 # %%
 import os
 import json
