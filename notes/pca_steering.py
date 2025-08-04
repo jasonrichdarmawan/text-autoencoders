@@ -18,7 +18,14 @@ original = np.array([
   [2, 1, 2],
   [2, 2, 2]
 ])
-cluster1 = original * 1
+cluster1 = original * 1 - [[1, 8, 1],
+                           [1, 7, 2],
+                           [1, 6, 3],
+                           [1, 5, 4],
+                           [1, 4, 5],
+                           [1, 3, 6],
+                           [1, 2, 7],
+                           [1, 1, 8]]
 cluster2 = original * 3
 print(f"cluster1:\n{cluster1}")
 print(f"cluster2:\n{cluster2}")
@@ -101,8 +108,13 @@ direction_unit = direction / np.linalg.norm(direction)
 
 point_to_cluster2_mean = cluster2_mean - original_point
 distance_to_cluster2 = np.dot(direction_unit, point_to_cluster2_mean)
-
 adaptive_shift = distance_to_cluster2 * direction_unit
+
+# equivalent
+# proj = np.dot(direction_unit, point_to_cluster2_mean)
+# total_distance = np.linalg.norm(direction)
+# adaptive_shift = proj / total_distance * direction
+
 shifted_point = original_point + scaling * adaptive_shift
 
 original_2d = pca.transform([original_point])[0]
@@ -151,9 +163,9 @@ fig.add_trace(go.Scatter3d(
 
 # Plot the direction unit as axis
 fig.add_trace(go.Scatter3d(
-    x=[cluster2_mean[0] - direction_unit[0], cluster2_mean[0] + direction_unit[0]],
-    y=[cluster2_mean[1] - direction_unit[1], cluster2_mean[1] + direction_unit[1]],
-    z=[cluster2_mean[2] - direction_unit[2], cluster2_mean[2] + direction_unit[2]],
+    x=[cluster1_mean[0] - direction_unit[0], cluster2_mean[0] + direction_unit[0]],
+    y=[cluster1_mean[1] - direction_unit[1], cluster2_mean[1] + direction_unit[1]],
+    z=[cluster1_mean[2] - direction_unit[2], cluster2_mean[2] + direction_unit[2]],
     mode='lines+markers',
     marker=dict(size=2, color='black'),
     line=dict(color='black', width=4, dash='dash'),
@@ -216,6 +228,17 @@ fig.add_trace(go.Surface(
     showscale=False,
     name='Dividing Plane'
 ))
+
+fig.update_layout(
+    scene=dict(
+        xaxis_title='X',
+        yaxis_title='Y',
+        zaxis_title='Z',
+        aspectmode='data'
+    ),
+    margin=dict(l=0, r=0, b=0, t=0)
+)
+fig.show()
 
 # %%
 
