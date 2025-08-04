@@ -1,4 +1,5 @@
 # %%
+
 import os
 import json
 import torch
@@ -10,7 +11,7 @@ import random # For subsampling
 
 # Assuming these utils are in the same directory or accessible
 from utils_load_data import load_embeds, load_split_paragraphs
-from utils_sonar import load_tokenizer # Or use the alternative below
+# from utils_sonar import load_tokenizer # Or use the alternative below
 
 # --- Alternative Tokenizer Loading ---
 # try:
@@ -32,6 +33,8 @@ import umap # Use umap-learn library
 import phate # Import PHATE
 import plotly.express as px # For interactive plots
 
+# %%
+
 # --- Configuration ---
 unit = "Characters" # Or "Tokens"
 MAX_FILES_TO_LOAD = 100 # Adjust as needed for memory/time
@@ -41,6 +44,8 @@ USE_CALCULATION_SUBSAMPLING = True
 # Subsample *again* for the interactive plot (should be smaller for performance)
 INTERACTIVE_SUBSAMPLE_SIZE = 2000
 RANDOM_STATE = 42 # For reproducibility
+
+# %%
 
 # --- Load Tokenizer ---
 # tokenizer = load_tokenizer() # Uncomment if using the alternative loading
@@ -106,6 +111,7 @@ def load_data_for_analysis(max_files=MAX_FILES_TO_LOAD):
     # Return numpy array for vectors, lists/numpy arrays for metadata
     return vec_array, all_texts, np.array(all_lengths), np.array(all_labels)
 
+# %%
 
 # --- Plotting Functions ---
 def plot_dimensionality_reduction_static(results, labels, lengths, title):
@@ -240,7 +246,8 @@ def run_tsne_analysis(data, texts, labels, lengths):
     print("\nRunning t-SNE...")
     tsne_model = TSNE(
         n_components=2, perplexity=30, learning_rate='auto',
-        n_iter=300, init='pca', random_state=RANDOM_STATE,
+        n_iter_without_progress=300, 
+        init='pca', random_state=RANDOM_STATE,
         n_jobs=-1, verbose=1
     )
     # Fit t-SNE on the potentially pre-subsampled data passed to this function
@@ -297,6 +304,59 @@ def run_phate_analysis(data, texts, labels, lengths):
         )
     return phate_results
 
+# %%
+
+"""
+Personal note:
+1. You are an expert in Principal Component 
+   Analysis (PCA), Uniform Manifold Approximation 
+   and Projection (UMAP), t-distributed stochastic 
+   neighbor embedding (t-SNE), 
+   Potential of Heat-diffusion for Affinity-based 
+   Trajectory Embedding (PHATE). What is the goal 
+   of PCA? What is the goal of UMAP? What is the 
+   goal of t-SNE? What is the goal of PHATE?
+
+   PCA (Principal Component Analysis):
+   The goal of PCA is to reduce dimensionality of
+   data by finding new orthogonal axes
+   (principal components) that capture the maximum
+   variance in the data. It projects the data onto
+   these axes, allowing you to represent high-
+   dimensional data in fewer dimensions
+   (often 2 or 3) while preserving as much
+   as information (variance) as possible
+
+   UMAP (Uniform Manifold Approximation and Projection):
+   UMAP aims to reduce dimensionality while preserving
+   both local and some global structure of the data.
+   It is based on manifold learning and constructs
+   a high-dimensional graph,
+   then optimizes a low-dimensional graph to be
+   as structurally similar as possible.
+   UMAP is often used for visualization and clustering,
+   and is faster and more scalable than t-SNE
+
+   t-SNE (t-distributed Stochastic Neighbor Embedding):
+   The goal of t-SNE is to visualize high-dimensional
+   data by reducing it to two or three dimensions,
+   focusing on preserving local similarities (i.e.,
+   points that are close in high-dimensional space
+   remain close in the low-dimensional embedding).
+   It is particularly good for visualizing clusters,
+   but does not preserve global structure well.
+
+   PHATE (Potential of Heat-difussion for Affinity-
+   based Trajectory Embedding):
+   PHATE is designed to capture both local and
+   global nonlinear structure in high-dimensional
+   data, especially for data with continuous trajectories
+   (e.g., biological processes). It uses diffusion
+   geometry to model transitions and relationships,
+   producing embeddings that reveal both clusters
+   and progression/trajectory patterns
+"""
+
 # --- Main Execution ---
 if __name__ == "__main__":
     # 1. Load Data (including texts now)
@@ -333,10 +393,6 @@ if __name__ == "__main__":
     run_phate_analysis(data_for_calc, texts_for_calc, labels_for_calc, lengths_for_calc) # Added PHATE call
 
     print("\nAnalysis complete.")
-
-# %%
-
-print("hello")
 
 # %%
 def plot_dimensionality_reduction_interactive_length(results, texts, labels, lengths, title):
