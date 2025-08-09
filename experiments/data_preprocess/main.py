@@ -804,7 +804,8 @@ class EncoderDecoderModel(nn.Module):
         input_target=input_target,
         embeddings_sim=embeddings_sim,
       )
-      loss = cl_loss + gen_loss
+      gen_loss_weight = 0.01
+      loss = cl_loss + gen_loss * gen_loss_weight
       output_kwargs.update({
         "contrastive_loss": cl_loss,
         "reconstruction_loss": gen_loss,

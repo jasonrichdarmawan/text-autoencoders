@@ -25,6 +25,10 @@ Notes:
   Then, do beam search, select the token, and repeats until `max_seq_len` is reached.
   Lastly, it sort the hypotheses by their scores. In other words, I am not sure 
   whether we can decode it in one forward pass and compute the loss in one forward pass.
+
+  So far, reconstructing "hello world" will result in loss of 4.53, even though
+  the model predicts the correct token. The solution is to scale the loss
+  by 0.01, so that it does not dominate the contrastive learning loss.
 """
 
 # %%
