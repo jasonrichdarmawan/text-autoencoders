@@ -60,6 +60,7 @@ from pytorch_lightning import (
 )
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.utilities import rank_zero_info
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from transformers.modeling_outputs import ModelOutput
 from transformers.optimization import get_linear_schedule_with_warmup
@@ -75,9 +76,9 @@ from fairseq2.models.sequence import SequenceBatch
 from fairseq2.nn.padding import get_seqs_and_padding_mask
 from fairseq2.data.text.tokenizers import get_text_tokenizer_hub
 
-from torchmetrics.text.rouge import ROUGEScore
+# from torchmetrics.text.rouge import ROUGEScore
 
-from time import sleep # TODO: remove this later
+# from time import sleep # TODO: remove this later
 
 # %%
 
@@ -92,6 +93,8 @@ setup_fairseq2()
 
 class Args(TypedDict):
   data_dir: str
+  checkpoint_path: str | None
+  default_root_dir: str
   accelerator: str
   strategy: str
   devices: list[int]
@@ -117,6 +120,17 @@ def parse_args() -> Args:
     type=str,
     required=True,
     help="Path to the workspace directory where data will be processed.",
+  )
+  parser.add_argument(
+    "--checkpoint_path",
+    type=str,
+    default=None,
+    help="Path to the model checkpoint for loading.",
+  )
+  parser.add_argument(
+    "--default_root_dir",
+    type=str,
+    help="Default root directory for PyTorch Lightning logs.",
   )
   parser.add_argument(
     "--accelerator",
@@ -245,7 +259,9 @@ class TaskDataModule(LightningDataModule):
     )
     self.collator = DataCollator(pad_idx=self.tokenizer.vocab_info.pad_idx)
 
-    self.dataset = None
+    self.train_dataset = None
+    self.val_dataset = None
+    self.test_dataset = None
 
   def prepare_data(self):
     # download, split, etc...
@@ -264,7 +280,7 @@ class TaskDataModule(LightningDataModule):
     [1] https://lightning.ai/docs/pytorch/stable/common/trainer.html#use-distributed-sampler
     """
     sampler = (
-      DistributedSampler(self.dataset, shuffle=True)
+      DistributedSampler(self.train_dataset, shuffle=True)
       if dist.is_available() and dist.is_initialized()
       else None
     )
@@ -272,7 +288,7 @@ class TaskDataModule(LightningDataModule):
       task=self.task,
       sampler=sampler,
       shuffle=sampler is None,
-      dataset=self.dataset,
+      dataset=self.train_dataset,
       batch_size=self.batch_size,
       drop_last=True,
       collate_fn=self.collator,
@@ -282,7 +298,7 @@ class TaskDataModule(LightningDataModule):
 
   def val_dataloader(self):
     sampler = (
-      DistributedSampler(self.dataset, shuffle=False)
+      DistributedSampler(self.val_dataset, shuffle=False)
       if dist.is_available() and dist.is_initialized()
       else None
     )
@@ -290,7 +306,7 @@ class TaskDataModule(LightningDataModule):
       task=self.task,
       sampler=sampler,
       shuffle=sampler is None,
-      dataset=self.dataset,
+      dataset=self.val_dataset,
       batch_size=self.batch_size,
       drop_last=False,
       collate_fn=self.collator,
@@ -300,7 +316,7 @@ class TaskDataModule(LightningDataModule):
   
   def test_dataloader(self):
     sampler = (
-      DistributedSampler(self.dataset, shuffle=False)
+      DistributedSampler(self.test_dataset, shuffle=False)
       if dist.is_available() and dist.is_initialized()
       else None
     )
@@ -308,7 +324,7 @@ class TaskDataModule(LightningDataModule):
       task=self.task,
       sampler=sampler,
       shuffle=sampler is None,
-      dataset=self.dataset,
+      dataset=self.test_dataset,
       batch_size=self.batch_size,
       drop_last=False,
       collate_fn=self.collator,
@@ -391,7 +407,7 @@ class TaskDataModule(LightningDataModule):
     dataset = load_dataset(
       path="google-research-datasets/wiki_split",
     )
-    # dataset['train'] = dataset['train'].select(range(5000)) # TODO: remove this later
+    dataset['train'] = dataset['train'].select(range(10)) # TODO: remove this later
 
     train_dataset = dataset['train'].map(
       preprocess, 
@@ -447,27 +463,48 @@ class TaskDataModule(LightningDataModule):
     stage: str, 
     path: str,
   ):
-    split_map = {
-      "fit": "train", 
-      "validate": "val", 
-      "test": "test"
-    }
-
-    if stage not in split_map:
-      raise ValueError(f"Unknown stage: {stage}")
-
-    split = split_map[stage]
-
-    self.dataset = load_from_disk(
-      os.path.join(
-        self.data_dir,
-        path,
-        "processed",
-        f"{self.task.value}_{split}",
+    if stage == "fit":
+      self.train_dataset = load_from_disk(
+        os.path.join(
+          self.data_dir,
+          path,
+          "processed",
+          f"{self.task.value}_train",
+        )
       )
-    )
-    
-    rank_zero_info(f"Loaded {path} {self.task.value} {split} dataset with {len(self.dataset)} samples.")
+      self.val_dataset = load_from_disk(
+        os.path.join(
+          self.data_dir,
+          path,
+          "processed",
+          f"{self.task.value}_val",
+        )
+      )
+      rank_zero_info(f"Loaded {path} {self.task.value} train dataset with {len(self.train_dataset)} samples.")
+      rank_zero_info(f"Loaded {path} {self.task.value} val dataset with {len(self.val_dataset)} samples.")
+    elif stage == "test":
+      self.test_dataset = load_from_disk(
+        os.path.join(
+          self.data_dir,
+          path,
+          "processed",
+          f"{self.task.value}_test",
+        )
+      )
+      rank_zero_info(f"Loaded {path} {self.task.value} test dataset with {len(self.test_dataset)} samples.")
+    else:
+      raise ValueError(f"Unknown stage: {stage}")
+  
+  def teardown(self, stage):
+    if stage == "fit":
+      self.train_dataset = None
+      self.val_dataset = None
+      rank_zero_info("Teardown: train and val datasets set to None.")
+    elif stage == "test":
+      self.test_dataset = None
+      rank_zero_info("Teardown: test dataset set to None.")
+    else:
+      raise ValueError(f"Unknown stage: {stage}")
 
 class TaskDataLoader(DataLoader):
   def __init__(self, task: Task, *args, **kwargs):
@@ -502,6 +539,10 @@ class MultiTaskDataModule(LightningDataModule):
   def setup(self, stage):
     for dataset in self.datasets.values():
       dataset.setup(stage=stage)
+  
+  def teardown(self, stage):
+    for dataset in self.datasets.values():
+      dataset.teardown(stage=stage)
 
   def train_dataloader(self):
     dataset = MultiTaskIterableDataset(
@@ -931,9 +972,9 @@ class LitModel(LightningModule):
     state = {}
     for name, param in self.named_parameters():
       if param.requires_grad:
-        state[name] = param.data.cpu().numpy()
+        state[name] = param.data.cpu()
     for name, buffer in self.named_buffers():
-      state[name] = buffer.data.cpu().numpy()
+      state[name] = buffer.data.cpu()
     return state
 
   def on_save_checkpoint(self, checkpoint):
@@ -964,12 +1005,16 @@ class LitModel(LightningModule):
       lr, 
       prog_bar=True, 
       logger=True,
+      on_step=True,
+      on_epoch=False,
     )
     self.log(
       "train_cl_loss", 
       cl_loss, 
       prog_bar=True, 
       logger=True,
+      on_step=True,
+      on_epoch=False,
       sync_dist=True,
       batch_size=batch_size,
     )
@@ -978,6 +1023,8 @@ class LitModel(LightningModule):
       gen_loss, 
       prog_bar=True, 
       logger=True,
+      on_step=True,
+      on_epoch=False,
       sync_dist=True,
       batch_size=batch_size,
     )
@@ -986,6 +1033,8 @@ class LitModel(LightningModule):
       loss, 
       prog_bar=True, 
       logger=True,
+      on_step=True,
+      on_epoch=False,
       sync_dist=True,
       batch_size=batch_size,
     )
@@ -1012,13 +1061,13 @@ class LitModel(LightningModule):
     # return t.tensor(0.0, requires_grad=True)
   
   def validation_step(self, batch):
-    self.validation_step_outputs = {
-      "contrastive_loss": [],
-      "reconstruction_loss": [],
-      "loss": [],
-      # "decoded_targets": [],
-      # "decoded_outputs": [],
-    }
+    # self.validation_step_outputs = {
+    #   "contrastive_loss": [],
+    #   "reconstruction_loss": [],
+    #   "loss": [],
+    #   # "decoded_targets": [],
+    #   # "decoded_outputs": [],
+    # }
 
     outputs = self.model(
       task=batch['task'],
@@ -1033,77 +1082,113 @@ class LitModel(LightningModule):
     # decoded_outputs = outputs.decoded_outputs
     # decoded_targets = outputs.decoded_targets
 
-    self.validation_step_outputs["contrastive_loss"].append(cl_loss)
-    self.validation_step_outputs["reconstruction_loss"].append(gen_loss)
-    self.validation_step_outputs["loss"].append(loss)
+    # self.validation_step_outputs["contrastive_loss"].append(cl_loss)
+    # self.validation_step_outputs["reconstruction_loss"].append(gen_loss)
+    # self.validation_step_outputs["loss"].append(loss)
     # self.validation_step_outputs["decoded_outputs"].extend(decoded_outputs)
     # self.validation_step_outputs["decoded_targets"].extend(decoded_targets)
 
-  def on_validation_epoch_end(self):
-    outputs = self.validation_step_outputs
-    contrastive_loss = t.stack(outputs["contrastive_loss"]).mean()
-    reconstruction_loss = t.stack(outputs["reconstruction_loss"]).mean()
-    loss = t.stack(outputs["loss"]).mean()
-    # decoded_outputs = outputs["decoded_outputs"]
-    # decoded_targets = outputs["decoded_targets"]
-
-    # rouge = ROUGEScore()
-    # rouge_score = rouge(
-    #   preds=decoded_outputs, 
-    #   target=decoded_targets,
-    # )
-    # rouge1_fmeasure = rouge_score["rouge1_fmeasure"].to(device=self.device)
-    # rouge2_fmeasure = rouge_score["rouge2_fmeasure"].to(device=self.device)
-    # rougeL_fmeasure = rouge_score["rougeL_fmeasure"].to(device=self.device)
-
+    batch_size = len(batch['input_a'])
     self.log(
       "val_cl_loss_epoch", 
-      contrastive_loss,
+      cl_loss,
       logger=True,
+      on_step=False,
+      on_epoch=True,
       sync_dist=True,
+      batch_size=batch_size,
     )
     self.log(
       "val_gen_loss_epoch", 
-      reconstruction_loss,
+      gen_loss,
       logger=True,
+      on_step=False,
+      on_epoch=True,
       sync_dist=True,
+      batch_size=batch_size,
     )
     self.log(
       "val_loss_epoch", 
       loss,
       logger=True,
+      on_step=False,
+      on_epoch=True,
       sync_dist=True,
+      batch_size=batch_size,
     )
 
-    # self.log(
-    #   "val_rouge1", 
-    #   rouge1_fmeasure,
-    #   logger=True,
-    #   sync_dist=True,
-    # )
-    # self.log(
-    #   "val_rouge2", 
-    #   rouge2_fmeasure,
-    #   logger=True,
-    #   sync_dist=True,
-    # )
-    # self.log(
-    #   "val_rougeL", 
-    #   rougeL_fmeasure,
-    #   logger=True,
-    #   sync_dist=True,
-    # )
+    return loss
 
-    self.validation_step_outputs.clear()
+  # def on_validation_epoch_end(self):
+  #   rank_zero_info("Validation epoch ended, calculating metrics...")
+
+  #   outputs = self.validation_step_outputs
+  #   contrastive_loss = t.stack(outputs["contrastive_loss"]).mean()
+  #   reconstruction_loss = t.stack(outputs["reconstruction_loss"]).mean()
+  #   loss = t.stack(outputs["loss"]).mean()
+  #   # decoded_outputs = outputs["decoded_outputs"]
+  #   # decoded_targets = outputs["decoded_targets"]
+
+  #   # rouge = ROUGEScore()
+  #   # rouge_score = rouge(
+  #   #   preds=decoded_outputs, 
+  #   #   target=decoded_targets,
+  #   # )
+  #   # rouge1_fmeasure = rouge_score["rouge1_fmeasure"].to(device=self.device)
+  #   # rouge2_fmeasure = rouge_score["rouge2_fmeasure"].to(device=self.device)
+  #   # rougeL_fmeasure = rouge_score["rougeL_fmeasure"].to(device=self.device)
+
+  #   self.log(
+  #     "val_cl_loss_epoch", 
+  #     contrastive_loss,
+  #     logger=True,
+  #     on_epoch=True,
+  #     sync_dist=True,
+  #   )
+  #   self.log(
+  #     "val_gen_loss_epoch", 
+  #     reconstruction_loss,
+  #     logger=True,
+  #     on_epoch=True,
+  #     sync_dist=True,
+  #   )
+  #   self.log(
+  #     "val_loss_epoch", 
+  #     loss,
+  #     logger=True,
+  #     on_epoch=True,
+  #     sync_dist=True,
+  #   )
+
+  #   # self.log(
+  #   #   "val_rouge1", 
+  #   #   rouge1_fmeasure,
+  #   #   logger=True,
+  #   #   sync_dist=True,
+  #   # )
+  #   # self.log(
+  #   #   "val_rouge2", 
+  #   #   rouge2_fmeasure,
+  #   #   logger=True,
+  #   #   sync_dist=True,
+  #   # )
+  #   # self.log(
+  #   #   "val_rougeL", 
+  #   #   rougeL_fmeasure,
+  #   #   logger=True,
+  #   #   sync_dist=True,
+  #   # )
+
+  #   self.validation_step_outputs.clear()
 
   def test_step(self, batch):
-    self.test_step_outputs = {
-      "contrastive_loss": [],
-      "reconstruction_loss": [],
-      "loss": [],
-      # "decoded_targets": [],
-      # "decoded_outputs": [],
-    }
+    # self.test_step_outputs = {
+    #   "contrastive_loss": [],
+    #   "reconstruction_loss": [],
+    #   "loss": [],
+    #   # "decoded_targets": [],
+    #   # "decoded_outputs": [],
+    # }
 
     outputs = self.model(
       task=batch['task'],
@@ -1118,68 +1203,99 @@ class LitModel(LightningModule):
     # decoded_outputs = outputs.decoded_outputs
     # decoded_targets = outputs.decoded_targets
 
-    self.test_step_outputs["contrastive_loss"].append(cl_loss)
-    self.test_step_outputs["reconstruction_loss"].append(gen_loss)
-    self.test_step_outputs["loss"].append(loss)
+    # self.test_step_outputs["contrastive_loss"].append(cl_loss)
+    # self.test_step_outputs["reconstruction_loss"].append(gen_loss)
+    # self.test_step_outputs["loss"].append(loss)
     # self.test_step_outputs["decoded_outputs"].extend(decoded_outputs)
     # self.test_step_outputs["decoded_targets"].extend(decoded_targets)
 
-  def on_test_epoch_end(self):
-    outputs = self.test_step_outputs
-    contrastive_loss = t.stack(outputs["contrastive_loss"]).mean()
-    reconstruction_loss = t.stack(outputs["reconstruction_loss"]).mean()
-    loss = t.stack(outputs["loss"]).mean()
-    # decoded_outputs = outputs["decoded_outputs"]
-    # decoded_targets = outputs["decoded_targets"]
-
-    # rouge = ROUGEScore()
-    # rouge_score = rouge(
-    #   preds=decoded_outputs, 
-    #   target=decoded_targets,
-    # )
-    # rouge1_fmeasure = rouge_score["rouge1_fmeasure"].to(device=self.device)
-    # rouge2_fmeasure = rouge_score["rouge2_fmeasure"].to(device=self.device)
-    # rougeL_fmeasure = rouge_score["rougeL_fmeasure"].to(device=self.device)
-
+    batch_size = len(batch['input_a'])
     self.log(
       "test_cl_loss_epoch", 
-      contrastive_loss,
+      cl_loss,
       logger=True,
+      on_step=False,
+      on_epoch=True,
       sync_dist=True,
+      batch_size=batch_size,
     )
     self.log(
       "test_gen_loss_epoch", 
-      reconstruction_loss,
+      gen_loss,
       logger=True,
+      on_step=False,
+      on_epoch=True,
       sync_dist=True,
+      batch_size=batch_size,
     )
     self.log(
       "test_loss_epoch", 
       loss,
       logger=True,
+      on_step=False,
+      on_epoch=True,
       sync_dist=True,
+      batch_size=batch_size,
     )
 
-    # self.log(
-    #   "test_rouge1", 
-    #   rouge1_fmeasure,
-    #   logger=True,
-    #   sync_dist=True,
-    # )
-    # self.log(
-    #   "test_rouge2", 
-    #   rouge2_fmeasure,
-    #   logger=True,
-    #   sync_dist=True,
-    # )
-    # self.log(
-    #   "test_rougeL",
-    #   rougeL_fmeasure,
-    #   logger=True,
-    #   sync_dist=True,
-    # )
+  # def on_test_epoch_end(self):
+  #   rank_zero_info("Test epoch ended, calculating metrics...")
 
-    self.test_step_outputs.clear()  
+  #   outputs = self.test_step_outputs
+  #   contrastive_loss = t.stack(outputs["contrastive_loss"]).mean()
+  #   reconstruction_loss = t.stack(outputs["reconstruction_loss"]).mean()
+  #   loss = t.stack(outputs["loss"]).mean()
+  #   # decoded_outputs = outputs["decoded_outputs"]
+  #   # decoded_targets = outputs["decoded_targets"]
+
+  #   # rouge = ROUGEScore()
+  #   # rouge_score = rouge(
+  #   #   preds=decoded_outputs, 
+  #   #   target=decoded_targets,
+  #   # )
+  #   # rouge1_fmeasure = rouge_score["rouge1_fmeasure"].to(device=self.device)
+  #   # rouge2_fmeasure = rouge_score["rouge2_fmeasure"].to(device=self.device)
+  #   # rougeL_fmeasure = rouge_score["rougeL_fmeasure"].to(device=self.device)
+
+  #   self.log(
+  #     "test_cl_loss_epoch", 
+  #     contrastive_loss,
+  #     logger=True,
+  #     sync_dist=True,
+  #   )
+  #   self.log(
+  #     "test_gen_loss_epoch", 
+  #     reconstruction_loss,
+  #     logger=True,
+  #     sync_dist=True,
+  #   )
+  #   self.log(
+  #     "test_loss_epoch", 
+  #     loss,
+  #     logger=True,
+  #     sync_dist=True,
+  #   )
+
+  #   # self.log(
+  #   #   "test_rouge1", 
+  #   #   rouge1_fmeasure,
+  #   #   logger=True,
+  #   #   sync_dist=True,
+  #   # )
+  #   # self.log(
+  #   #   "test_rouge2", 
+  #   #   rouge2_fmeasure,
+  #   #   logger=True,
+  #   #   sync_dist=True,
+  #   # )
+  #   # self.log(
+  #   #   "test_rougeL",
+  #   #   rougeL_fmeasure,
+  #   #   logger=True,
+  #   #   sync_dist=True,
+  #   # )
+
+  #   self.test_step_outputs.clear()  
   
   def configure_optimizers(self):
     param_dict = {
@@ -1231,10 +1347,26 @@ datamodule = MultiTaskDataModule(
   batch_size=args['batch_size'],
 )
 
-model = LitModel(
-  lr=args['lr'],
-  num_warmup_steps=args['num_warmup_steps'],
-  num_training_steps=args['max_steps'],
+if args['checkpoint_path']:
+  model = LitModel.load_from_checkpoint(
+    checkpoint_path=args['checkpoint_path'],
+    strict=False,
+  )
+  print(f"Loaded model from checkpoint: {args['checkpoint_path']}")
+else:
+  model = LitModel(
+    lr=args['lr'],
+    num_warmup_steps=args['num_warmup_steps'],
+    num_training_steps=args['max_steps'],
+  )
+  print("Initialized new model.")
+
+checkpoint_callback = ModelCheckpoint(
+  # dirpath=f"{args['default_root_dir']}/checkpoints",
+  filename="{epoch}-{step}-{val_loss_epoch:.4f}",
+  monitor="val_loss_epoch",
+  mode="min",
+  save_top_k=1,
 )
 
 trainer = Trainer(
@@ -1246,17 +1378,20 @@ trainer = Trainer(
   ),
   devices=args['devices'],
   precision="bf16-mixed",
+  callbacks=[checkpoint_callback],
   max_steps=args['max_steps'],
+  val_check_interval=args['max_steps'],
+  enable_checkpointing=True,
   # profiler="simple",
+  default_root_dir=args['default_root_dir'],
 )
 trainer.fit(
   model=model, 
   datamodule=datamodule,
 )
-for task, dataset in datamodule.datasets.items():
-  trainer.test(
-    model=model, 
-    dataloaders=dataset.test_dataloader(),
-  )
+trainer.test(
+  model=model, 
+  datamodule=datamodule,
+)
 
 # %%
