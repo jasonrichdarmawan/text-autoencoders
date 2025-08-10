@@ -729,8 +729,8 @@ class EncoderDecoderModelOutput(ModelOutput):
   contrastive_loss: Float[Tensor, ""] | None = None
   reconstruction_loss: Float[Tensor, ""] | None = None
   loss: Float[Tensor, ""] | None = None
-  decoded_outputs: list[str] | None = None
-  decoded_targets: list[str] | None = None
+  # decoded_outputs: list[str] | None = None
+  # decoded_targets: list[str] | None = None
 
 class EncoderDecoderModel(nn.Module):
   def __init__(
@@ -752,7 +752,7 @@ class EncoderDecoderModel(nn.Module):
     input_a: list[Float[Tensor, "seq_len"]], 
     input_b: list[Float[Tensor, "seq_len"]], 
     input_target: list[Float[Tensor, "seq_len"]] | None = None,
-    return_decoded: bool = False,
+    # return_decoded: bool = False,
   ):
     encoder_output = self.encoder(
       task=task,
@@ -769,31 +769,31 @@ class EncoderDecoderModel(nn.Module):
       "embeddings": embeddings_sim,
     }
 
-    if return_decoded:
-      batch_size = embeddings_sim.shape[0]
-      inputs = (
-        t.cat(
-          [embeddings_sim, embeddings_pos], 
-          dim=0,
-        )
-        if embeddings_pos is not None 
-        else embeddings_sim
-      )
-      decoded = self.decoder.predict(
-        inputs=inputs,
-        target_lang="eng_Latn",
-        max_seq_len=512,
-      )
-      decoded_outputs = decoded[:batch_size]
-      decoded_targets = (
-        decoded[batch_size:] 
-        if embeddings_pos is not None 
-        else None
-      )
-      output_kwargs.update({
-        "decoded_outputs": decoded_outputs,
-        "decoded_targets": decoded_targets,
-      })
+    # if return_decoded:
+    #   batch_size = embeddings_sim.shape[0]
+    #   inputs = (
+    #     t.cat(
+    #       [embeddings_sim, embeddings_pos], 
+    #       dim=0,
+    #     )
+    #     if embeddings_pos is not None 
+    #     else embeddings_sim
+    #   )
+    #   decoded = self.decoder.predict(
+    #     inputs=inputs,
+    #     target_lang="eng_Latn",
+    #     max_seq_len=512,
+    #   )
+    #   decoded_outputs = decoded[:batch_size]
+    #   decoded_targets = (
+    #     decoded[batch_size:] 
+    #     if embeddings_pos is not None 
+    #     else None
+    #   )
+    #   output_kwargs.update({
+    #     "decoded_outputs": decoded_outputs,
+    #     "decoded_targets": decoded_targets,
+    #   })
 
     if input_target is not None:
       cl_loss = self.compute_contrastive_loss(
