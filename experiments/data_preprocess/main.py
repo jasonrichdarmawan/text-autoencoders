@@ -407,7 +407,6 @@ class TaskDataModule(LightningDataModule):
     dataset = load_dataset(
       path="google-research-datasets/wiki_split",
     )
-    dataset['train'] = dataset['train'].select(range(10)) # TODO: remove this later
 
     train_dataset = dataset['train'].map(
       preprocess, 
@@ -1380,7 +1379,8 @@ trainer = Trainer(
   precision="bf16-mixed",
   callbacks=[checkpoint_callback],
   max_steps=args['max_steps'],
-  val_check_interval=args['max_steps'],
+  # val_check_interval=args['max_steps'],
+  val_check_interval=250,
   enable_checkpointing=True,
   # profiler="simple",
   default_root_dir=args['default_root_dir'],
