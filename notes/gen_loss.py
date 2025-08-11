@@ -18,6 +18,8 @@ Notes:
   cosine similarity by a temperature value, to exaggerate the differences
   between the correct and incorrect embeddings.
 
+  random guess loss = -ln(1/batch_size)
+
 - The generation loss might be miscalculated.
   
   The way `fairseq2.generation.BeamSearchSeq2SeqGenerator` works is not straightforward.
@@ -29,6 +31,8 @@ Notes:
   So far, reconstructing "hello world" will result in loss of 4.53, even though
   the model predicts the correct token. The solution is to scale the loss
   by 0.01, so that it does not dominate the contrastive learning loss.
+
+  random guess loss = -ln(1/vocab_size)
 """
 
 # %%
@@ -70,8 +74,8 @@ sentences = [
   "hello world",
   "hello world",
   "hello world",
-  "hello",
-  "hello world. my name is jeff",
+  # "hello",
+  # "hello world. my name is jeff",
 ]
 seqs = [
   tokenizer_encoder(sentence)
@@ -138,8 +142,13 @@ for idx, hypotheses in enumerate(generator_output.hypotheses):
   # )
   seq = t.cat(
     [
-      t.tensor([text2vec_model.tokenizer.vocab_info.eos_idx]),
-      seqs[idx][1:-1]
+      t.tensor(
+        [
+          text2vec_model.tokenizer.vocab_info.eos_idx,
+        ]
+      ),
+      seqs[idx][:-1],
+      # seqs[idx][1:-1], # Remove first and last token (language token and EOS)
     ],
   )
   input_to_decoder.append(seq)
@@ -155,7 +164,8 @@ for idx, hypotheses in enumerate(generator_output.hypotheses):
   logits.append(model_output.logits.squeeze(0))
 
 labels = [
-  seq[1:]
+  seq
+  # seq[1:], # Remove first token (language token)
   for seq in seqs
   # hypotheses[0].seq
   # for hypotheses in generator_output.hypotheses
@@ -202,13 +212,23 @@ print(
 )
 print("gen_loss:", gen_loss.item())
 
+greedy_token = logits_padded.argmax(dim=-1)
+print("greedy_token:", greedy_token)
+for seq in greedy_token:
+  print(text_decoder(seq))
+
 # %%
 
 # Batch
 input_to_decoder = [
   t.cat([
-    t.tensor([text2vec_model.tokenizer.vocab_info.eos_idx]),
-    seq[1:-1]  # Remove first and last token (language token and EOS)
+    t.tensor(
+      [
+        text2vec_model.tokenizer.vocab_info.eos_idx,
+      ]
+    ),
+    seq[:-1], # Remove last token (EOS)
+    # seq[1:-1],  # Remove first and last token (language token and EOS)
   ])
   for seq in seqs
 ]
@@ -223,17 +243,20 @@ decoder_output, decoder_padding_mask = vec2text_model.model.decode(
 )
 
 model_output = vec2text_model.model.project(
-  decoder_output, decoder_padding_mask
+  decoder_output=decoder_output, 
+  decoder_padding_mask=decoder_padding_mask,
 )
 
 logits = model_output.logits
 
-labels = [
-  seq[1:]
-  for seq in seqs
-  # hypotheses[0].seq
-  # for hypotheses in generator_output.hypotheses
-]
+labels = seqs
+# labels = [
+#   # seq[1:]  # Remove first token (language token)
+#   seq
+#   for seq in seqs
+#   # hypotheses[0].seq
+#   # for hypotheses in generator_output.hypotheses
+# ]
 
 max_len_logits = logits.size(1)
 max_len_labels = max(l.size(0) for l in labels)
@@ -272,6 +295,55 @@ print(
   ).item()
 )
 print("gen_loss:", gen_loss.item())
+
+greedy_token = logits_padded.argmax(dim=-1)
+print("greedy_token:", greedy_token)
+for seq in greedy_token:
+  print(text_decoder(seq))
+
+# %%
+
+print("Decoding with greedy search...")
+batch_size = embeddings.shape[0]
+input_seqs = t.tensor(
+  [
+    [
+      text2vec_model.tokenizer.vocab_info.eos_idx,
+      256047, # language token
+    ]
+    for _ in range(batch_size)
+  ],
+)
+
+with t.no_grad():
+  for i in range(max_seq_len):
+    decoder_output, decoder_padding_mask = vec2text_model.model.decode(
+      seqs=input_seqs,
+      padding_mask=None,
+      encoder_output=embeddings.unsqueeze(1),
+      encoder_padding_mask=None,
+    )
+    greedy_token = (
+      vec2text_model.model.project(
+        decoder_output=decoder_output, 
+        decoder_padding_mask=decoder_padding_mask,
+      )
+      .logits[:, -1, :]
+      .argmax(dim=-1, keepdim=True)
+    )
+    input_seqs = t.cat(
+      [input_seqs, greedy_token],
+      dim=1
+    )
+    if (
+      greedy_token[-1] == text2vec_model.tokenizer.vocab_info.eos_idx
+    ):
+      break
+
+print(f"seqs:\n{input_seqs}")
+
+for seq in input_seqs:
+  print(text_decoder(seq))
 
 # %%
 
@@ -332,7 +404,7 @@ if input_target is not None:
   sim_fct = nn.CosineSimilarity(dim=-1)
   temperature = 0.05
   cos_sim = sim_fct(
-    embeddings_pos.unsqueeze(dim=1), # shape: (batch_size, 1, n_embd)
+    embeddings_sim.unsqueeze(dim=1), # shape: (batch_size, 1, n_embd)
     embeddings_pos.unsqueeze(dim=0), # shape: (1, batch_size, n_embd)
   ) / temperature
   # cos_sim = t.tensor([

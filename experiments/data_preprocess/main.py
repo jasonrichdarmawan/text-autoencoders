@@ -884,10 +884,13 @@ class EncoderDecoderModel(nn.Module):
     input_to_decoder = [
       t.cat([
         t.tensor(
-          [self.decoder.tokenizer.vocab_info.eos_idx],
+          [
+            self.decoder.tokenizer.vocab_info.eos_idx,
+          ],
           device=device,
         ),
-        seq[1:-1],  # Remove first and last token (language token and EOS)
+        seq[:-1], # Remove last token (EOS)
+        # seq[1:-1], # Remove first and last token (language token and EOS)
       ])
       for seq in input_target
     ]
@@ -907,16 +910,18 @@ class EncoderDecoderModel(nn.Module):
     )
 
     model_output = self.decoder.model.project(
-      decoder_output, 
-      decoder_padding_mask,
+      decoder_output=decoder_output, 
+      decoder_padding_mask=decoder_padding_mask,
     )
 
     logits = model_output.logits
 
-    labels = [
-      seq[1:]
-      for seq in input_target
-    ]
+    labels = input_target
+    # labels = [
+    #   seq
+    #   # seq[1:] # Remove first token (language token)
+    #   for seq in input_target
+    # ]
 
     max_len_logits = logits.size(1)
     max_len_labels = max(l.size(0) for l in labels)
@@ -926,7 +931,8 @@ class EncoderDecoderModel(nn.Module):
     if logits.size(1) < max_len:
       pad_amt = max_len - logits.size(1)
       logits_padded = F.pad(
-        logits, (0, 0, 0, pad_amt), 
+        input=logits, 
+        pad=(0, 0, 0, pad_amt), 
         value=self.decoder.tokenizer.vocab_info.pad_idx,
       )
     
@@ -935,7 +941,8 @@ class EncoderDecoderModel(nn.Module):
       if label.size(0) < max_len:
         pad_amt = max_len - label.size(0)
         label = F.pad(
-          label, (0, pad_amt), 
+          input=label, 
+          pad=(0, pad_amt), 
           value=self.decoder.tokenizer.vocab_info.pad_idx,
         )
       labels_padded.append(label)
