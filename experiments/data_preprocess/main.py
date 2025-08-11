@@ -76,6 +76,8 @@ from fairseq2.models.sequence import SequenceBatch
 from fairseq2.nn.padding import get_seqs_and_padding_mask
 from fairseq2.data.text.tokenizers import get_text_tokenizer_hub
 
+import numpy as np
+
 # from torchmetrics.text.rouge import ROUGEScore
 
 # from time import sleep # TODO: remove this later
@@ -844,7 +846,10 @@ class EncoderDecoderModel(nn.Module):
         input_target=input_target,
         embeddings_sim=embeddings_sim,
       )
-      gen_loss_weight = 0.01
+      batch_size = embeddings_sim.shape[0]
+      gen_loss_weight = -np.log(1/batch_size) / -np.log(1/self.decoder.tokenizer.vocab_info.size)
+      # cl_loss random loss is -ln(1/batch_size) and
+      # gen_loss random loss is -ln(1/vocab_size)
       loss = cl_loss + gen_loss * gen_loss_weight
       output_kwargs.update({
         "contrastive_loss": cl_loss,
