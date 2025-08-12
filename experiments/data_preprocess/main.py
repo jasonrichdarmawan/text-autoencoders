@@ -89,13 +89,16 @@ t.set_float32_matmul_precision('high')
 
 # %%
 
+print("Setting up fairseq2...")
 setup_fairseq2()
 
 # %%
 
 class Args(TypedDict):
-  data_dir: str
+  train: bool
   checkpoint_path: str | None
+
+  data_dir: str
   default_root_dir: str
   accelerator: str
   strategy: str
@@ -117,6 +120,11 @@ class Args(TypedDict):
 
 def parse_args() -> Args:
   parser = ArgumentParser(description="Data Preprocessing Script")
+  parser.add_argument(
+    "--train",
+    action="store_true",
+    help="Run in training mode.",
+  )
   parser.add_argument(
     "--data_dir",
     type=str,
@@ -148,7 +156,6 @@ def parse_args() -> Args:
     "--devices",
     nargs="+",
     type=int,
-    required=True,
   )
   parser.add_argument(
     "--batch_size",
@@ -173,19 +180,33 @@ def parse_args() -> Args:
   args = parser.parse_args()
   return Args(**vars(args))
 
-if False:
-  DATA_DIR = "/workspace/ALGOVERSE/UJR/jason/data"
+def is_notebook():
+  try:
+    __IPYTHON__ # type: ignore
+    return True
+  except NameError:
+    return False
+
+if is_notebook():
+  WORKSPACE_DIR = "/workspace/ALGOVERSE/UJR/jason"
+  DEFAULT_ROOT_DIR = f"{WORKSPACE_DIR}/experiments/data_preprocess"
+  DATA_DIR = f"{WORKSPACE_DIR}/data"
   sys.argv = [
     'main.py',
+    # '--train',
     '--data_dir', DATA_DIR,
+    '--default_root_dir', DEFAULT_ROOT_DIR,
     '--accelerator', 'gpu',
-    '--strategy', 'ddp',
-    '--devices', '1', '2', '3',
-    '--batch_size', '16',
+    '--strategy', 'auto',
+    '--devices', '2', '3',
+    '--batch_size', '8',
     '--lr', '1e-4',
-    '--num_warmup_steps', '500',
-    '--max_steps', '1000',
+    '--num_warmup_steps', '10',
+    '--max_steps', '20',
   ]
+
+  CHECKPOINT_PATH = f"{DEFAULT_ROOT_DIR}/lightning_logs/version_1/checkpoints/epoch=0-step=123250-val_loss_epoch=0.7371.ckpt"
+  sys.argv += ['--checkpoint_path', CHECKPOINT_PATH]
 
 args = parse_args()
 
@@ -767,10 +788,11 @@ class EncoderModel(nn.Module):
 
 @dataclass
 class EncoderDecoderModelOutput(ModelOutput):
-  embeddings: Float[Tensor, "batch_size n_embd"]
+  embeddings_sim: Float[Tensor, "batch_size n_embd"]
   contrastive_loss: Float[Tensor, ""] | None = None
   reconstruction_loss: Float[Tensor, ""] | None = None
   loss: Float[Tensor, ""] | None = None
+  embeddings_pos: Float[Tensor, "batch_size n_embd"] | None = None
   # decoded_outputs: list[str] | None = None
   # decoded_targets: list[str] | None = None
 
@@ -808,7 +830,7 @@ class EncoderDecoderModel(nn.Module):
     # target_seqs = encoder_output.target_seqs
 
     output_kwargs = {
-      "embeddings": embeddings_sim,
+      "embeddings_sim": embeddings_sim,
     }
 
     # if return_decoded:
@@ -855,6 +877,7 @@ class EncoderDecoderModel(nn.Module):
         "contrastive_loss": cl_loss,
         "reconstruction_loss": gen_loss,
         "loss": loss,
+        "embeddings_pos": embeddings_pos,
       })
 
     return EncoderDecoderModelOutput(**output_kwargs)
@@ -972,20 +995,45 @@ class LitModel(LightningModule):
     self.lr = lr
     self.num_warmup_steps = num_warmup_steps
     self.num_training_steps = num_training_steps
+
     self.model = EncoderDecoderModel()
+    
     # self.dummy_parameter = nn.Parameter(t.tensor(0.0, requires_grad=True))
 
+    self.strict_loading = False
+    # This is a hack which is required
+    # because checkpoint['state_dict']
+    # is modified in on_save_checkpoint
+    # to reduce checkpoint file size.
+    # In the future, instead of modifying
+    # checkpoint['state_dict'], we can
+    # pass the encoder and decoder
+    # in the argument, and use
+    # self.save_hyperparameters(ignore)
+
   def on_fit_start(self):
+    self.fix_device()
+
+  def on_validation_start(self):
+    self.fix_device()
+
+  def on_test_start(self):
+    self.fix_device()
+
+  def fix_device(self):
     device = next(self.model.decoder.model.parameters()).device
     self.model.decoder.device = device
+    # This is a hack which is required
+    # because EmbeddngToTextModelPipeline
+    # sets the device in the constructor,
+    # but we need to set it after the model
+    # is moved to the correct device.
 
   def get_trainable_state_dict(self):
     state = {}
     for name, param in self.named_parameters():
       if param.requires_grad:
         state[name] = param.data.cpu()
-    for name, buffer in self.named_buffers():
-      state[name] = buffer.data.cpu()
     return state
 
   def on_save_checkpoint(self, checkpoint):
@@ -1071,7 +1119,18 @@ class LitModel(LightningModule):
     # sleep(0.1)
     # return t.tensor(0.0, requires_grad=True)
   
-  def validation_step(self, batch):
+  def vec2text(
+    self,
+    embeddings: Float[Tensor, "batch_size vocab_size"],
+  ):
+    texts = self.model.decoder.predict(
+      inputs=embeddings,
+      target_lang="eng_Latn",
+      max_seq_len=512,
+    )
+    return texts
+
+  def validation_step(self, batch, batch_idx):
     # self.validation_step_outputs = {
     #   "contrastive_loss": [],
     #   "reconstruction_loss": [],
@@ -1087,6 +1146,8 @@ class LitModel(LightningModule):
       input_target=batch['input_target'],
       # return_decoded=True,
     )
+    embeddings_sim = outputs.embeddings_sim
+    embeddings_pos = outputs.embeddings_pos
     cl_loss = outputs.contrastive_loss
     gen_loss = outputs.reconstruction_loss
     loss = outputs.loss
@@ -1127,6 +1188,16 @@ class LitModel(LightningModule):
       sync_dist=True,
       batch_size=batch_size,
     )
+
+    if batch_idx == 0 and self.global_rank == 0:
+      self.log_examples(
+        tag="val_examples",
+        input_a=batch['input_a'],
+        input_b=batch['input_b'],
+        task=batch['task'],
+        embeddings_prediction=embeddings_sim,
+        embeddings_target=embeddings_pos,
+      )
 
     return loss
 
@@ -1192,7 +1263,7 @@ class LitModel(LightningModule):
 
   #   self.validation_step_outputs.clear()
 
-  def test_step(self, batch):
+  def test_step(self, batch, batch_idx):
     # self.test_step_outputs = {
     #   "contrastive_loss": [],
     #   "reconstruction_loss": [],
@@ -1208,6 +1279,8 @@ class LitModel(LightningModule):
       input_target=batch['input_target'],
       # return_decoded=True,
     )
+    embeddings_sim = outputs.embeddings_sim
+    embeddings_pos = outputs.embeddings_pos
     cl_loss = outputs.contrastive_loss
     gen_loss = outputs.reconstruction_loss
     loss = outputs.loss
@@ -1248,6 +1321,92 @@ class LitModel(LightningModule):
       sync_dist=True,
       batch_size=batch_size,
     )
+
+    if batch_idx == 0 and self.global_rank == 0:
+      self.log_examples(
+        tag="test_examples",
+        input_a=batch['input_a'],
+        input_b=batch['input_b'],
+        task=batch['task'],
+        embeddings_prediction=embeddings_sim,
+        embeddings_target=embeddings_pos,
+      )
+    
+    return loss
+
+  def log_examples(
+    self,
+    tag: str,
+    input_a: list[Float[Tensor, "seq_len"]],
+    input_b: list[Float[Tensor, "seq_len"]],
+    task: Task,
+    embeddings_prediction: Float[Tensor, "batch_size n_embd"],
+    embeddings_target: Float[Tensor, "batch_size n_embd"] | None = None,
+  ):
+    """
+    Log some examples to TensorBoard
+    """
+    text_decoder = self.model.decoder.tokenizer.create_decoder()
+    input_a = [
+      text_decoder(seq)
+      for seq in input_a
+    ]
+    input_b = [
+      text_decoder(seq)
+      for seq in input_b
+    ]
+
+    embeddings = t.cat(
+      [embeddings_prediction, embeddings_target], 
+      dim=0,
+    )
+    texts = self.vec2text(
+      embeddings=embeddings,
+    )
+    batch_size = len(input_a)
+    prediction = texts[:batch_size]
+    target = texts[batch_size:]
+
+    tasks = [task.value] * batch_size
+    markdown_text = self.create_markdown_table(
+      input_a=input_a,
+      input_b=input_b,
+      tasks=tasks,
+      prediction=prediction,
+      target=target,
+    )
+
+    tensorboard = self.logger.experiment
+    tensorboard.add_text(
+      tag=tag,
+      text_string=markdown_text,
+      global_step=self.global_step,
+    )
+
+  def create_markdown_table(
+    self,
+    input_a: list[str],
+    input_b: list[str],
+    tasks: list[str],
+    prediction: list[str],
+    target: list[str],
+  ):
+    batch_size = len(input_a)
+    rows = [
+      "| input_a | input_b | task | prediction | target |",
+      "| ------- | ------- | ---- | ---------- | ------ |",
+    ]
+    for i in range(batch_size):
+      rows.append(
+        f"| {input_a[i]} |"
+        f" {input_b[i]} |"
+        f" {tasks[i]} |"
+        f" {prediction[i]} |"
+        f" {target[i]} |"
+      )
+    markdown_text = "\n".join(rows)
+    return markdown_text
+    
 
   # def on_test_epoch_end(self):
   #   rank_zero_info("Test epoch ended, calculating metrics...")
@@ -1358,19 +1517,7 @@ datamodule = MultiTaskDataModule(
   batch_size=args['batch_size'],
 )
 
-if args['checkpoint_path']:
-  model = LitModel.load_from_checkpoint(
-    checkpoint_path=args['checkpoint_path'],
-    strict=False,
-  )
-  print(f"Loaded model from checkpoint: {args['checkpoint_path']}")
-else:
-  model = LitModel(
-    lr=args['lr'],
-    num_warmup_steps=args['num_warmup_steps'],
-    num_training_steps=args['max_steps'],
-  )
-  print("Initialized new model.")
+# %%
 
 checkpoint_callback = ModelCheckpoint(
   # dirpath=f"{args['default_root_dir']}/checkpoints",
@@ -1380,13 +1527,16 @@ checkpoint_callback = ModelCheckpoint(
   save_top_k=1,
 )
 
+if args["strategy"] == "ddp":
+  strategy = DDPStrategy(find_unused_parameters=True)
+elif args["strategy"] is not None:
+  strategy = args["strategy"]
+else:
+  strategy = "auto"
+
 trainer = Trainer(
   accelerator=args['accelerator'],
-  strategy=(
-    DDPStrategy(find_unused_parameters=True)
-    if args["strategy"].startswith("ddp")
-    else "auto"
-  ),
+  strategy=strategy,
   devices=args['devices'],
   precision="bf16-mixed",
   callbacks=[checkpoint_callback],
@@ -1396,14 +1546,26 @@ trainer = Trainer(
   enable_checkpointing=True,
   # profiler="simple",
   default_root_dir=args['default_root_dir'],
+  # log_every_n_steps=1,
 )
-trainer.fit(
-  model=model, 
-  datamodule=datamodule,
+
+model = LitModel(
+  lr=args['lr'],
+  num_warmup_steps=args['num_warmup_steps'],
+  num_training_steps=args['max_steps'],
 )
+
+if args['train']:
+  trainer.fit(
+    model=model, 
+    datamodule=datamodule,
+    ckpt_path=args['checkpoint_path'],
+  )
+
 trainer.test(
   model=model, 
   datamodule=datamodule,
+  ckpt_path=args['checkpoint_path'],
 )
 
 # %%

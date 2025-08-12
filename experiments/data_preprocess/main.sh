@@ -13,6 +13,10 @@ python main.py \
   --max_steps 123742 \
 "
 
+if [ -n "$TRAIN" ]; then
+  CMD="$CMD --train"
+fi
+
 if [ -n "$CHECKPOINT_PATH" ]; then
   CMD="$CMD --checkpoint_path $CHECKPOINT_PATH"
 fi
