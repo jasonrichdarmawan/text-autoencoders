@@ -64,10 +64,12 @@ class DataModule(L.LightningDataModule):
         )
 
     def collate_fn(self, batch):
-        embedding1 = [item["embedding1"] for item in batch]
+        text1 = [item["text1"] for item in batch]
         lang1 = [item["lang1"] for item in batch]
+        embedding1 = [item["embedding1"] for item in batch]
         embedding1 = torch.stack(embedding1, dim=0)
         return {
+            "text1": text1,
             "embedding1": embedding1,
             "lang1": lang1,
         }

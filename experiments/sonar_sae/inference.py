@@ -58,7 +58,7 @@ if is_notebook():
         "16384",
         # Checkpoint
         "--checkpoint_filename",
-        f"{WORKSPACE}/experiments/sonar_sae/{LOGGER_NAME}/checkpoints/epoch=19-step=30000.ckpt",
+        f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGER_NAME}/epoch=19-step=30000.ckpt",
         # Misc
         "--device",
         "cuda:1",

@@ -62,7 +62,7 @@ from lightning.pytorch.callbacks import (
 # Setup for notebook or script execution
 if is_notebook():
     WORKSPACE_DIR = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGER_NAME = "01-gated-16384-lr_coef-0.02"
+    LOGGER_NAME = "gated-16384-lr_coef=2-e2"
 
     mode = "load_from_dict"  # "load_from_dict"
 
@@ -76,7 +76,7 @@ if is_notebook():
     ]
 
     # mode=training
-    if mode == "train":
+    if mode == "load_from_dict":
         sys.argv += [
             # Training hyperparameters
             "--d_sae",
@@ -104,7 +104,7 @@ if is_notebook():
             LOGGER_NAME,
             # Checkpoints
             "--checkpoints_dir",
-            f"{WORKSPACE_DIR}/experiments/sonar_sae/{LOGGER_NAME}/checkpoints",
+            f"{WORKSPACE_DIR}/experiments/sonar_sae/checkpoints",
         ]
 
 
@@ -364,7 +364,7 @@ wandb_logger.experiment.config.update(cfg.to_dict())
 print("Setting up trainer...")
 
 checkpoint_callback = ModelCheckpoint(
-    dirpath=args["checkpoints_dir"],
+    dirpath=f"{args['checkpoints_dir']}/{wandb_logger.experiment.id}",
     save_top_k=-1,
     every_n_train_steps=(args["total_training_batches"] // cfg.n_checkpoints),
     # every_n_train_steps=1,  # TODO: remove
