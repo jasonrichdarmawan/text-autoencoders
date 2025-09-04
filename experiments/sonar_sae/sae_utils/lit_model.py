@@ -6,6 +6,8 @@ from jaxtyping import Float
 
 import torch
 
+from torch.distributions.categorical import Categorical
+
 import lightning as L
 
 from sae_lens import (
@@ -72,6 +74,9 @@ class LitModel(L.LightningModule):
         self.sae = sae
 
         self.cfg = cfg
+        # self.cfg.weight_normalize_eps = 1e-8
+        # self.cfg.resample_scale = 0.5
+        # self.cfg.resample_freq = 2500
         self.activation_scaler = ActivationScaler()
 
         self.register_buffer(
@@ -120,7 +125,7 @@ class LitModel(L.LightningModule):
         """
         self.n_training_samples += batch["embedding1"].shape[0]
 
-        scaled_batch = self.activation_scaler(batch["embedding1"])
+        scaled_batch = self.activation_scaler(acts=batch["embedding1"])
         step_input = TrainStepInput(
             sae_in=scaled_batch,
             coefficients=self.get_coefficients(),
@@ -134,6 +139,12 @@ class LitModel(L.LightningModule):
             did_fire = (train_step_output.feature_acts > 0).float().sum(dim=-2) > 0
             self.n_forward_passes_since_fired += 1
             self.n_forward_passes_since_fired[did_fire] = 0
+
+            # personal note:
+            # suppose we take the mean over batch
+            # size instead of sum, then we don't have to use
+            # a different learning rate for different batch size
+            # however, the original code uses sum, so we keep it that way
             self.act_freq_scores += (
                 (train_step_output.feature_acts.abs() > 0).float().sum(dim=0)
             )
@@ -173,6 +184,10 @@ class LitModel(L.LightningModule):
         for scheduler in self.coefficient_schedulers.values():
             scheduler.step()
 
+        # # Resample dead neurons
+        # if (self.global_step + 1) % self.cfg.resample_freq == 0:
+        #     self.resample_neurons(self.last_batch)
+
     def configure_optimizers(self):
         """
         Partial code from sae_lens.training.sae_trainer.SAETrainer.configure_optimizers
@@ -199,8 +214,53 @@ class LitModel(L.LightningModule):
 
         return [optimizer], [scheduler]
 
+    # @torch.no_grad()
+    # def resample_neurons(self, sae_in: Float[torch.Tensor, "batch d_in"]):
+    #     """
+    #     Resample neurons for GatedSAE
+
+    #     Partial code from https://arena-chapter1-transformer-interp.streamlit.app/[1.3.2]_Interpretability_with_SAEs#exercise-implement-resample-advanced
+    #     """
+    #     l2_loss = (
+    #         (sae_in - self.sae(x=sae_in)).pow(2).mean(dim=-1)
+    #     )  # shape: (batch_size)
+
+    #     dead_latents = self.dead_neurons
+    #     n_dead = dead_latents.sum()
+    #     if n_dead == 0:
+    #         return
+
+    #     if l2_loss.max() < 1e-6:
+    #         return
+
+    #     distn = Categorical(probs=l2_loss.pow(2) / l2_loss.pow(2).sum())
+    #     replacement_indices = distn.sample((n_dead,))
+
+    #     replacement_values = (sae_in - self.sae.b_dec)[replacement_indices]
+    #     replacement_values_normalized = replacement_values / (
+    #         replacement_values.norm(dim=-1, keepdim=True)
+    #         + self.cfg.weight_normalize_eps
+    #     )
+
+    #     W_enc_norm_alive_mean = (
+    #         self.sae.W_enc[:, ~dead_latents].norm(dim=0).mean().item()
+    #         if [~dead_latents].any()
+    #         else 1.0
+    #     )
+
+    #     # New names for weights & biases to resample
+    #     self.sae.W_dec.data[dead_latents, :] = replacement_values_normalized
+    #     self.sae.W_enc.data[:, dead_latents] = (
+    #         replacement_values_normalized.T
+    #         * W_enc_norm_alive_mean
+    #         * self.cfg.resample_scale
+    #     )
+    #     self.sae.b_mag.data[dead_latents] = 0.0
+    #     self.sae.b_gate.data[dead_latents] = 0.0
+    #     self.r_mag.data[dead_latents] = 0.0
+
     @property
-    def feature_sparsity(self) -> torch.Tensor:
+    def feature_sparsity(self) -> Float[torch.Tensor, "d_sae"]:
         """
         Code from sae_lens.training.sae_trainer.SAETrainer.feature_sparsity
 
@@ -217,7 +277,7 @@ class LitModel(L.LightningModule):
         self.n_frac_active_samples.zero_()
 
     @property
-    def dead_neurons(self) -> torch.Tensor:
+    def dead_neurons(self) -> Float[torch.Tensor, "d_sae"]:
         """
         Code from sae_lens.training.sae_trainer.SAETrainer.dead_neurons
         """

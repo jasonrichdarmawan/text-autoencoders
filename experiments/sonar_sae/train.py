@@ -307,6 +307,7 @@ cfg = LanguageModelSAERunnerConfig(
         normalize_activations="none",  # TODO: implementation
         l1_coefficient=args["l1_coefficient"],
         l1_warm_up_steps=args["l1_warm_up_steps"],
+        normalize_decoder=True,
     ),
     # Training hyperparameters (standard)
     lr=5e-5,

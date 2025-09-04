@@ -9,7 +9,7 @@ python train.py \
 if [ "$MODE" == "load_from_dict" ]; then
     CMD="
     $CMD --d_sae 16384 \
-         --l1_coefficient 0.015 \
+         --l1_coefficient 0.01 \
          --l1_warm_up_steps 3_000 \
          --total_training_batches 30_000 \
          --lr_warm_up_steps 3_000 \
