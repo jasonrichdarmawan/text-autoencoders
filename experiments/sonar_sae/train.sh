@@ -9,7 +9,7 @@ python train.py \
 if [ "$MODE" == "load_from_dict" ]; then
     CMD="
     $CMD --d_sae 16384 \
-         --l1_coefficient 0.01 \
+         --l1_coefficient $L1_COEFFICIENT \
          --l1_warm_up_steps 3_000 \
          --total_training_batches 30_000 \
          --lr_warm_up_steps 3_000 \
@@ -17,7 +17,7 @@ if [ "$MODE" == "load_from_dict" ]; then
          --batch_size 128 \
          --accumulate_grad_batches 32 \
          \
-         --devices 2 \
+         --devices $CUDA_ID \
          \
          --logger_dir $WORKSPACE/experiments/sonar_sae \
          --logger_name $LOGGER_NAME \

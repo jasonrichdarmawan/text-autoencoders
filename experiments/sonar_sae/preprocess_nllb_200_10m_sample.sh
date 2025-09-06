@@ -1,7 +1,7 @@
 #!/bin/bash
 
 CMD="
-python preprocess.py \
+python preprocess_nllb_200_10m_sample.py \
     --workspace $WORKSPACE \
     --split $SPLIT \
     --num_shards $NUM_SHARDS \

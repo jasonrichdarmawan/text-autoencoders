@@ -123,9 +123,21 @@ class LitModel(L.LightningModule):
 
         batch: dict with keys: see sae_utils.nllb_data_module.NLLBDataModule.train_dataloader
         """
-        self.n_training_samples += batch["embedding1"].shape[0]
+        batch_size = (
+            batch["nllb_200_6m_sample_embedding"]["embedding1"].shape[0]
+            + batch["nllb_primary_datasets_embedding"]["embedding1"].shape[0]
+        )
+        self.n_training_samples += batch_size
 
-        scaled_batch = self.activation_scaler(acts=batch["embedding1"])
+        scaled_batch = self.activation_scaler(
+            acts=torch.concat(
+                [
+                    batch["nllb_200_6m_sample_embedding"]["embedding1"],
+                    batch["nllb_primary_datasets_embedding"]["embedding1"],
+                ],
+                dim=0,
+            )
+        )
         step_input = TrainStepInput(
             sae_in=scaled_batch,
             coefficients=self.get_coefficients(),
@@ -148,7 +160,7 @@ class LitModel(L.LightningModule):
             self.act_freq_scores += (
                 (train_step_output.feature_acts.abs() > 0).float().sum(dim=0)
             )
-            self.n_frac_active_samples += batch["embedding1"].shape[0]
+            self.n_frac_active_samples += batch_size
 
             if (self.global_step + 1) % self.cfg.logger.wandb_log_frequency == 0:
                 train_step_log_dict = self._build_train_step_log_dict(

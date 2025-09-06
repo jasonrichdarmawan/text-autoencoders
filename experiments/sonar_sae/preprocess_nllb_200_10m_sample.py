@@ -238,19 +238,6 @@ if args["mode"] == "save_to_disk" and args["debug"]:
 # Generate embeddings
 
 if args["mode"] == "save_to_disk":
-    features = Features(
-        {
-            "laser_score": Value(dtype="float64"),
-            "lang1": Value(dtype="string"),
-            "text1": Value(dtype="string"),
-            "embedding1": Sequence(feature=Value("float64"), length=1024),
-            "lang2": Value(dtype="string"),
-            "text2": Value(dtype="string"),
-            "embedding2": Sequence(feature=Value("float64"), length=1024),
-            "blaser_sim": Value(dtype="float64"),
-        }
-    )
-
     data: list[dict[str, Any]] = []
 
     target_device = torch.device("cpu")
@@ -287,6 +274,18 @@ if args["mode"] == "save_to_disk":
 # Load to Dataset
 
 if args["mode"] == "save_to_disk":
+    features = Features(
+        {
+            "laser_score": Value(dtype="float64"),
+            "lang1": Value(dtype="string"),
+            "text1": Value(dtype="string"),
+            "embedding1": Sequence(feature=Value("float32"), length=1024),
+            "lang2": Value(dtype="string"),
+            "text2": Value(dtype="string"),
+            "embedding2": Sequence(feature=Value("float32"), length=1024),
+            "blaser_sim": Value(dtype="float64"),
+        }
+    )
     ds = Dataset.from_list(
         mapping=data,
         features=features,
@@ -318,6 +317,7 @@ if args["mode"] == "push_to_hub":
     all_ds.push_to_hub(
         repo_id="jasonrichdarmawan/nllb-200-6M-sample-embedding",
         split=split,
+        num_proc=num_proc,
     )
 
 # %%

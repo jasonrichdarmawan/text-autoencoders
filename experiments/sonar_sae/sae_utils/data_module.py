@@ -2,6 +2,8 @@ import os
 
 import lightning as L
 
+from lightning.pytorch.utilities.combined_loader import CombinedLoader
+
 from datasets import (
     load_dataset,
 )
@@ -12,6 +14,8 @@ from torch.utils.data import (
 )
 
 import fairseq2
+
+import random
 
 
 class DataModule(L.LightningDataModule):
@@ -32,20 +36,30 @@ class DataModule(L.LightningDataModule):
         super().__init__()
         fairseq2.setup_fairseq2()
 
-        self.dataset_path = "jasonrichdarmawan/nllb-200-6M-sample-embedding"
         self.batch_size = batch_size
 
         # Shuffling hyperparameters
-        self.num_workers = os.cpu_count() // 2
-        self.prefetch_factor = self.num_workers * 2
+        self.num_workers = 2
+        self.prefetch_factor = 64
 
     def setup(self, stage=None):
-        self.train_data = load_dataset(
-            path=self.dataset_path,
+        self.train_nllb_200_6m_sample_embedding = load_dataset(
+            path="jasonrichdarmawan/nllb-200-6M-sample-embedding",
             split="train",
             streaming=False,
         )
-        self.train_data = self.train_data.with_format(type="torch")
+        self.train_nllb_200_6m_sample_embedding = (
+            self.train_nllb_200_6m_sample_embedding.with_format(type="torch")
+        )
+
+        self.train_nllb_primary_datasets_embedding = load_dataset(
+            path="jasonrichdarmawan/nllb-primary-datasets-embedding",
+            split="train",
+            streaming=False,
+        )
+        self.train_nllb_primary_datasets_embedding = (
+            self.train_nllb_primary_datasets_embedding.with_format(type="torch")
+        )
         # self.train_data = self.train_data.to_iterable_dataset(
         #     num_shards=self.num_workers,
         # )
@@ -54,22 +68,67 @@ class DataModule(L.LightningDataModule):
         # self.train_data = self.train_data.shuffle(
         #     buffer_size=self.batch_size * self.prefetch_factor * 2,
         # )
-        return DataLoader(
-            dataset=self.train_data,
-            batch_size=self.batch_size,
-            # shuffle=True,
-            collate_fn=self.collate_fn,
-            num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor,
+        return CombinedLoader(
+            iterables={
+                "nllb_200_6m_sample_embedding": DataLoader(
+                    dataset=self.train_nllb_200_6m_sample_embedding,
+                    batch_size=self.batch_size // 2,
+                    # shuffle=True,
+                    collate_fn=self.collate_nllb_200_6m_sample_embedding,
+                    num_workers=self.num_workers,
+                    prefetch_factor=self.prefetch_factor,
+                    pin_memory=True,
+                    persistent_workers=True,
+                ),
+                "nllb_primary_datasets_embedding": DataLoader(
+                    dataset=self.train_nllb_primary_datasets_embedding,
+                    batch_size=self.batch_size // 2,
+                    # shuffle=True,
+                    collate_fn=self.collate_nllb_primary_datasets_embedding,
+                    num_workers=self.num_workers,
+                    prefetch_factor=self.prefetch_factor,
+                    pin_memory=True,
+                    persistent_workers=True,
+                ),
+            }
         )
 
-    def collate_fn(self, batch):
-        text1 = [item["text1"] for item in batch]
-        lang1 = [item["lang1"] for item in batch]
-        embedding1 = [item["embedding1"] for item in batch]
-        embedding1 = torch.stack(embedding1, dim=0)
+    def collate_nllb_200_6m_sample_embedding(self, batch):
+        text = []
+        lang = []
+        embedding = []
+        for item in batch:
+            if random.random() < 0.5:
+                text.append(item["text1"])
+                lang.append(item["lang1"])
+                embedding.append(item["embedding1"])
+            else:
+                text.append(item["text2"])
+                lang.append(item["lang2"])
+                embedding.append(item["embedding2"])
+        embedding = torch.stack(embedding, dim=0)
         return {
-            "text1": text1,
-            "embedding1": embedding1,
-            "lang1": lang1,
+            "text1": text,
+            "lang1": lang,
+            "embedding1": embedding,
+        }
+
+    def collate_nllb_primary_datasets_embedding(self, batch):
+        text = []
+        lang = []
+        embedding = []
+        for item in batch:
+            if random.random() < 0.5:
+                text.append(item["text_1"])
+                lang.append(item["lang_1"])
+                embedding.append(item["embedding_1"])
+            else:
+                text.append(item["text_2"])
+                lang.append(item["lang_2"])
+                embedding.append(item["embedding_2"])
+        embedding = torch.stack(embedding, dim=0)
+        return {
+            "text1": text,
+            "lang1": lang,
+            "embedding1": embedding,
         }
