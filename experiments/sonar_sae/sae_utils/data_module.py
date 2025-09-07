@@ -90,7 +90,8 @@ class DataModule(L.LightningDataModule):
                     pin_memory=True,
                     persistent_workers=True,
                 ),
-            }
+            },
+            mode="max_size_cycle",
         )
 
     def collate_nllb_200_6m_sample_embedding(self, batch):
