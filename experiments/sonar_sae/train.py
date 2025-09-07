@@ -382,7 +382,7 @@ trainer = L.Trainer(
     log_every_n_steps=cfg.logger.wandb_log_frequency,
     max_steps=args["total_training_batches"],
     # max_steps=100, # TODO: remove
-    reload_dataloaders_every_n_epochs=1,
+    # reload_dataloaders_every_n_epochs=1,
 )
 
 trainer.fit(
