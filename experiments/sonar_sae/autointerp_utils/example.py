@@ -8,11 +8,12 @@ class Example:
     def __init__(
         self,
         text: str,
-        act: float | None,
+        act: float,
+        act_threshold: float,
     ):
         self.text = text
         self.act = act
-        self.is_active = act is not None
+        self.is_active = act >= act_threshold
 
     def to_str(self) -> str:
         return self.text.replace(">><<", "").replace("�", "").replace("\n", "↵")

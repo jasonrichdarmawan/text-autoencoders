@@ -31,6 +31,7 @@ from sae_utils import (
 from autointerp_utils import (
     AutoInterpConfig,
     AutoInterp,
+    print_autointerp_results,
 )
 
 import os
@@ -54,13 +55,15 @@ import asyncio
 
 from tabulate import tabulate
 
+import portalocker
+
 # %%
 # Parse arguments
 
 if is_notebook():
     WORKSPACE = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGER_NAME = "crkg5s4v"
-    CHECKPOINT_NAME = "epoch=19-step=30000"
+    LOGGER_ID = "dnjrmfqk"
+    CHECKPOINT_NAME = "epoch=9-step=30000"
     mode = "verify"  # "autointerp" or "verify"
     sys.argv = [
         "main.py",
@@ -69,7 +72,7 @@ if is_notebook():
         mode,
         # Results
         "--result_filename",
-        f"{WORKSPACE}/experiments/sonar_sae/autointerp_results/{LOGGER_NAME}/{CHECKPOINT_NAME}-nllb-200-6M-sample-embedding.json",
+        f"{WORKSPACE}/experiments/sonar_sae/autointerp_results/{LOGGER_ID}/{CHECKPOINT_NAME}-nllb-200-6M-sample-embedding.json",
     ]
 
     if mode == "autointerp":
@@ -86,16 +89,13 @@ if is_notebook():
             "11",
             # Checkpoint
             "--checkpoint_filename",
-            f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGER_NAME}/{CHECKPOINT_NAME}.ckpt",
+            f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGER_ID}/{CHECKPOINT_NAME}.ckpt",
             # Misc
             "--device",
             "cuda:2",
             "--max_concurrent",
             "10",
         ]
-
-
-# %%
 
 
 def parse_args():
@@ -175,6 +175,7 @@ if args["mode"] == "autointerp":
     data_module = DataModule(
         batch_size=args["batch_size"],
     )
+    data_module.setup("fit")
 
 
 # %%
@@ -208,19 +209,13 @@ if args["mode"] == "autointerp":
 
 
 # %%
-# Prepare data loader
-
-if args["mode"] == "autointerp":
-    data_module.setup("fit")
-
-
-# %%
 # Inference
 
 if args["mode"] == "autointerp":
     cfg = AutoInterpConfig(
         # latents=list[range(0, args["d_sae"], args["d_sae"] // 100)],
         latents=args["latents"],
+        total_tokens=6369073 + 788368,  # Entire datasets
         max_tokens=65536,
     )
 
@@ -244,24 +239,26 @@ if args["mode"] == "autointerp":
 
 # %%
 # Combine results with previous results
-if args["mode"] == "autointerp":
-    try:
-        with open(args["result_filename"], "r") as f:
-            loaded_results = json.load(f)
-    except FileNotFoundError:
-        loaded_results = {}
-
-    combined_results = {**loaded_results, **results}
-
-
-# %%
-# Save results
 
 if args["mode"] == "autointerp":
     os.makedirs(os.path.dirname(args["result_filename"]), exist_ok=True)
+    # Open for reading and writing, create if not exists
+    try:
+        with portalocker.Lock(args["result_filename"], "r+", timeout=60) as f:
+            loaded_results = json.load(f)
 
-    with open(args["result_filename"], "w") as f:
-        json.dump(combined_results, f, indent=2)
+            # moves the file pointer to the beginning, so we overwrite from the start
+            f.seek(0)
+
+            combined_results = {**loaded_results, **results}
+            json.dump(combined_results, f, indent=2)
+
+            # cuts off any remaining old data after the new data, so
+            # only the new content remains
+            f.truncate()
+    except FileNotFoundError:
+        with portalocker.Lock(args["result_filename"], "w+", timeout=60) as f:
+            json.dump(results, f, indent=2)
 
     print(f"Results saved to {args['result_filename']}")
 
@@ -269,27 +266,22 @@ if args["mode"] == "autointerp":
 # %%
 # Load results
 
+
 if args["mode"] == "verify":
     with open(args["result_filename"], "r") as f:
         loaded_results = json.load(f)
 
     print("Loaded results:")
-    print(
-        tabulate(
-            [
-                (k, v.get("explanation", ""), v.get("score", ""))
-                for k, v in sorted(
-                    loaded_results.items(),
-                    key=lambda item: int(item[0]),
-                )
-            ],
-            headers=["Latent", "Explanation", "Score"],
-            tablefmt="github",
-        )
+    print_autointerp_results(
+        results_dict=loaded_results,
     )
 
-    # Check latent 7
-    pprint.pprint(loaded_results["7"])
+# %%
+# Inspect specific latents
+
+if args["mode"] == "verify":
+    # Check latent
+    print(json.dumps(loaded_results["5248"], indent=2, ensure_ascii=False))
 
 
 # %%

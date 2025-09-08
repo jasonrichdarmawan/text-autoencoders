@@ -101,7 +101,11 @@ class AutoInterp:
                         )
                     )[0]
                     predictions_parsed = self.parse_predictions(predictions=predictions)
-                    score = self.score_predictions(
+                    accuracy = self.score_accuracy(
+                        predictions=predictions_parsed,
+                        scoring_examples=scoring_examples[latent],
+                    )
+                    f1 = self.score_f1(
                         predictions=predictions_parsed,
                         scoring_examples=scoring_examples[latent],
                     )
@@ -113,7 +117,10 @@ class AutoInterp:
                             for i, ex in enumerate(scoring_examples[latent], start=1)
                             if ex.is_active
                         ],
-                        "score": score,
+                        "f1": f1["f1"],
+                        "accuracy": accuracy,
+                        "precision": f1["precision"],
+                        "recall": f1["recall"],
                     }
                 return latent, result
 
@@ -154,6 +161,7 @@ class AutoInterp:
         latent_data = {
             latent: {
                 "rand_texts": [],
+                "rand_acts": t.empty(0, dtype=t.float32, device=self.model.sae.device),
                 "top_texts": [],
                 "top_values": t.empty(0, dtype=t.float32, device=self.model.sae.device),
             }
@@ -164,40 +172,54 @@ class AutoInterp:
         for batch in tqdm(
             iterable=range(total_batches), desc="Collecting activations data"
         ):
-            data = next(iterable)
-            data["embedding1"] = data["embedding1"].to(device=self.model.sae.device)
+            data = next(iterable)[0]
+            text = (
+                data["nllb_200_6m_sample_embedding"]["text1"]
+                + data["nllb_primary_datasets_embedding"]["text1"]
+            )
+            embedding = t.concat(
+                (
+                    data["nllb_200_6m_sample_embedding"]["embedding1"].to(
+                        self.model.sae.device
+                    ),
+                    data["nllb_primary_datasets_embedding"]["embedding1"].to(
+                        self.model.sae.device
+                    ),
+                ),
+                dim=0,
+            )
             with t.no_grad():
                 with t.autocast(device_type="cuda", dtype=t.bfloat16):
-                    acts = self.model.sae.encode(x=data["embedding1"])[
-                        :, self.cfg.latents
+                    acts = self.model.sae.encode(x=embedding)[:, self.cfg.latents]
+
+                for i, latent in enumerate(self.cfg.latents):
+                    # Get top activations from this batch,
+                    # and filter down to the data we'll actually
+                    # include
+                    top_indices = get_k_largest_indices(
+                        texts=text,
+                        acts=acts[:, i],
+                        k=self.cfg.n_top_ex_for_generation,
+                        no_overlap=self.cfg.no_overlap,
+                    )
+                    top_texts = [text[idx] for idx in top_indices]
+                    top_values = acts[top_indices, i]
+                    latent_data[latent]["top_texts"] += top_texts
+                    latent_data[latent]["top_values"] = t.cat(
+                        (latent_data[latent]["top_values"], top_values), dim=0
+                    )
+
+                    # Get random examples (our `all_rand_indices` tensor
+                    # tells us which random batch to take)
+                    rand_indices = all_rand_indices[
+                        all_rand_indices[:, i, 0] == batch, i, 1
                     ]
-
-                    for i, latent in enumerate(self.cfg.latents):
-                        # Get top activations from this batch,
-                        # and filter down to the data we'll actually
-                        # include
-                        top_indices = get_k_largest_indices(
-                            texts=data["text1"],
-                            acts=acts[:, i],
-                            k=self.cfg.n_top_ex_for_generation,
-                            no_overlap=self.cfg.no_overlap,
-                        )
-                        top_texts = [data["text1"][idx] for idx in top_indices]
-                        top_values = acts[top_indices, i]
-                        latent_data[latent]["top_texts"] += top_texts
-                        latent_data[latent]["top_values"] = t.cat(
-                            (latent_data[latent]["top_values"], top_values), dim=0
-                        )
-
-                        # Get random examples (our `all_rand_indices` tensor
-                        # tells us which random batch to take)
-                        rand_indices = all_rand_indices[
-                            all_rand_indices[:, i, 0] == batch, i, 1
-                        ]
-                        random_texts = [
-                            data["text1"][idx] for idx in rand_indices.tolist()
-                        ]
-                        latent_data[latent]["rand_texts"] += random_texts
+                    latent_data[latent]["rand_texts"] += [
+                        text[idx] for idx in rand_indices.tolist()
+                    ]
+                    latent_data[latent]["rand_acts"] = t.cat(
+                        (latent_data[latent]["rand_acts"], acts[rand_indices, i]), dim=0
+                    )
 
         # Dicts to store all generation
         # & scoring examples for each latent
@@ -226,6 +248,7 @@ class AutoInterp:
                 Example(
                     text=top_texts[topk[j]],
                     act=top_values[topk[j]].item(),
+                    act_threshold=act_threshold,
                 )
                 for j in sorted(rand_split_indices[: self.cfg.n_top_ex_for_generation])
             ]
@@ -235,22 +258,27 @@ class AutoInterp:
             # examples (with the top activating texts chosen
             # have zero overlap with those used in generation
             # examples)
-            scoring_pool = [
-                Example(
-                    text=top_texts[topk[j]],
-                    act=top_values[topk[j]].item(),
-                )
-                for j in rand_split_indices[self.cfg.n_top_ex_for_generation :]
-            ] + [
-                Example(
-                    text=random_text,
-                    act=None,
-                )
-                for random_text in latent_data[latent]["rand_texts"]
-            ]
             scoring_examples[latent] = random.sample(
-                scoring_pool,
-                k=min(self.cfg.n_ex_for_scoring, len(scoring_pool)),
+                [
+                    Example(
+                        text=top_texts[topk[j]],
+                        act=top_values[topk[j]].item(),
+                        act_threshold=act_threshold,
+                    )
+                    for j in rand_split_indices[self.cfg.n_top_ex_for_generation :]
+                ]
+                + [
+                    Example(
+                        text=random_text,
+                        act=random_act.item(),
+                        act_threshold=act_threshold,
+                    )
+                    for random_text, random_act in zip(
+                        latent_data[latent]["rand_texts"],
+                        latent_data[latent]["rand_acts"],
+                    )
+                ],
+                k=self.cfg.n_ex_for_scoring,
             )
 
         return generation_examples, scoring_examples
@@ -262,17 +290,19 @@ class AutoInterp:
             [f"{i + 1}. {ex.to_str()}" for i, ex in enumerate(generation_examples)]
         )
 
-        SYSTEM_PROMPT = """We're studying neurons in a neural network. Each neuron activates on some particular word/words or concept in a short document. Look at the parts of the document the neuron activates for and summarize in a single sentence what the neuron is activating on. Try to be specific in your explanations, although don't be so specific that you exclude some of the examples from matching your explanation. Pay attention to things like the capitalization and punctuation of the activating words or concepts, if that seems relevant. Keep the explanation as short and simple as possible, limited to 20 words or less. Omit punctuation and formatting. You should avoid giving long lists of words."""
-        if self.cfg.use_examples_in_explanation_prompt:
-            SYSTEM_PROMPT += """ Some examples: "This neuron activates on the word 'knows' in rhetorical questions like 'Who knows ... ?'", and "This neuron activates on verbs related to decision-making and preferences", and "This neuron activates on the substring 'Ent' at the start of words like 'Entrepreneur' or 'Entire'."""
-        else:
-            SYSTEM_PROMPT += (
-                """Your response should be in the form "This neuron activates on..."."""
-            )
-        USER_PROMPT = (
-            # f"""Below are the activating documents, primarily drawn from biblical sources. Identify the commonalities among them:\n\n{examples_as_str}"""
-            f"""The activating documents are given below:\n\n{examples_as_str}"""
-        )
+        SYSTEM_PROMPT = """You are an expert in linguistics and semantic analysis. Your task is to interpret features from a neural network that encodes entire sentences into a single representation. Each feature activates on sentences that share a common abstract property.
+
+I will provide you with a list of sentences that strongly activate a specific feature. Your goal is to find the underlying commonality and describe it in a single, concise sentence.
+
+Do NOT focus on simple keyword matching. Instead, consider properties like:
+- **Semantic Role**: Are these all sentences where someone is giving a command? Expressing doubt? Asking for information?
+- **Abstract Concepts**: Do these sentences relate to concepts like 'future plans', 'past regrets', 'expressions of gratitude', or 'scientific principles'?
+- **Syntactic Structure**: Are they all questions? Are they complex sentences with multiple clauses?
+- **Tone and Sentiment**: Do they share a sarcastic tone? Are they all optimistic?
+
+Summarize what this feature represents. Your explanation should be short, under 20 words, and start with "This feature activates on sentences that...". Omit final punctuation.
+"""
+        USER_PROMPT = f"""Here are the sentences that activate this feature:\n\n{examples_as_str}"""
 
         return [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -288,15 +318,36 @@ class AutoInterp:
             [f"{i + 1}. {ex.to_str()}" for i, ex in enumerate(scoring_examples)]
         )
 
-        SYSTEM_PROMPT = f"""We're studying neurons in a neural network. Each neuron activates on some particular word/words or concept in a short document. You will be given a short explanation of what this neuron activates for, and then be shown {len(examples_as_str)} example sequences. You will have to return a comma-separated list of the examples where you think the neuron should activate at least once. For example, your response might look like "1, 4, 7, 8". If you think there are no examples where the neuron will activate, you should just respond with "None". You should include nothing else in your response other than comma-separated numbers or the word "None" - this is important."""
-        USER_PROMPT = f"Here is the explanation: this neuron fires on {explanation}.\n\nHere are the examples:\n\n{examples_as_str}"
+        SYSTEM_PROMPT = f"""You are an expert AI evaluating a hypothesis about a neural network feature. You will be given a description of what a feature supposedly represents at the sentence level. You will then see {len(scoring_examples)} example sentences.
+
+Your task is to identify which of these sentences fit the description.
+
+Return a comma-separated list of the numbers corresponding to the sentences that match the description. If no sentences match, respond with the word "None".
+
+Your response must ONLY contain the comma-separated numbers or the word "None". Do not add any other words, explanations, or punctuation. This is critical.
+"""
+
+        # We create a fake user/assistant interaction to show the model exactly what to do.
+        ONE_SHOT_USER = """The description is: this feature activates on sentences that are questions about the weather.
+
+Here are the sentences to evaluate:
+1. What is the forecast for tomorrow?
+2. I think it might rain.
+3. Is it sunny outside?
+4. Let's go to the beach.
+"""
+        ONE_SHOT_ASSISTANT = "1, 3"
+
+        USER_PROMPT = f"The description is: {explanation}.\n\nHere are the sentences to evaluate:\n\n{examples_as_str}"
 
         return [
             {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": ONE_SHOT_USER},
+            {"role": "assistant", "content": ONE_SHOT_ASSISTANT},
             {"role": "user", "content": USER_PROMPT},
         ]
 
-    def score_predictions(
+    def score_accuracy(
         self, predictions: list[int], scoring_examples: list[Example]
     ) -> float:
         classifications = [
@@ -306,6 +357,39 @@ class AutoInterp:
         return sum(
             [c == cc for c, cc in zip(classifications, correct_classifications)]
         ) / len(classifications)
+
+    def score_f1(self, predictions: list[int], scoring_examples: list[Example]):
+        classifications = [
+            i in predictions for i in range(1, len(scoring_examples) + 1)
+        ]
+        correct_classifications = [ex.is_active for ex in scoring_examples]
+
+        # Edge case: no positives in ground truth and predictions
+        if sum(correct_classifications) == 0 and sum(classifications) == 0:
+            return {"f1": 1.0, "precision": 1.0, "recall": 1.0}
+
+        tp = sum([c and cc for c, cc in zip(classifications, correct_classifications)])
+        fp = sum(
+            [c and not cc for c, cc in zip(classifications, correct_classifications)]
+        )
+        fn = sum(
+            [not c and cc for c, cc in zip(classifications, correct_classifications)]
+        )
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+
+        if precision + recall == 0:
+            f1 = 0.0
+            return {"f1": 0.0, "precision": 0.0, "recall": 0.0}
+
+        f1 = 2 * (precision * recall) / (precision + recall)
+
+        return {
+            "f1": f1,
+            "precision": precision,
+            "recall": recall,
+        }
 
     async def get_response(
         self,
@@ -396,9 +480,9 @@ def get_k_largest_indices(
             seen.add(text)
         if len(unique_top_indices) == k:
             break
-    # assert (
-    #     len(unique_top_indices) == k
-    # ), f"Could only find {len(unique_top_indices)} unique texts"
+    assert (
+        len(unique_top_indices) == k
+    ), f"Could only find {len(unique_top_indices)} unique texts"
     return unique_top_indices
 
 

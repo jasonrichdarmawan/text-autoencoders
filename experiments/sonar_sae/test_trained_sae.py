@@ -50,15 +50,15 @@ from sae_lens import (
 
 if is_notebook():
     WORKSPACE = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGER_NAME = "crkg5s4v"
+    LOGGED_ID = "tk4tyu7f"
     sys.argv = [
-        "main.py",
+        "test_trained_sae.py",
         # Hyperparameters
         "--d_sae",
         "16384",
         # Checkpoint
         "--checkpoint_filename",
-        f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGER_NAME}/epoch=19-step=30000.ckpt",
+        f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGED_ID}/epoch=9-step=30000.ckpt",
         # Misc
         "--device",
         "cuda:1",
