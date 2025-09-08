@@ -87,6 +87,8 @@ if is_notebook():
             "3_000",
             "--total_training_batches",
             "30_000",
+            "--lr",
+            "0.00005",
             "--lr_warm_up_steps",
             "3_000",
             "--lr_decay_steps",
@@ -214,6 +216,11 @@ def parse_args() -> ArgsConfig:
         help="Total number of training batches",
     )
     parser.add_argument(
+        "--lr",
+        type=float,
+        help="Learning rate",
+    )
+    parser.add_argument(
         "--lr_warm_up_steps",
         type=int,
         help="Number of warm-up steps for learning rate",
@@ -310,7 +317,7 @@ cfg = LanguageModelSAERunnerConfig(
         normalize_decoder=True,
     ),
     # Training hyperparameters (standard)
-    lr=5e-5,
+    lr=args["lr"],
     lr_warm_up_steps=args["lr_warm_up_steps"],
     # lr_warm_up_steps=0,  # TODO: remove
     lr_decay_steps=args["lr_decay_steps"],

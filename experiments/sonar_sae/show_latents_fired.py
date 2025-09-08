@@ -63,7 +63,7 @@ from jaxtyping import Float
 
 if is_notebook():
     WORKSPACE = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGER_ID = "tk4tyu7f"
+    LOGGER_ID = "by40bhbn"
     CHECKPOINT_NAME = "epoch=9-step=30000"
     sys.argv = [
         "show_latents_fired.py",
@@ -252,6 +252,7 @@ embedding = text2vec_model.predict(
 )
 
 results = process_embedding_with_sae(embedding=embedding, source_langs=source_langs)
+feature_acts = results["feature_acts"]
 fired_latents_per_sample = results["fired_latents_per_sample"]
 reconstructed_texts = results["reconstructed_texts"]
 
