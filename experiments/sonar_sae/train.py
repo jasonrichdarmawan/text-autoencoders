@@ -47,6 +47,8 @@ from sae_lens import (
     TrainingSAE,
     TrainingSAEConfig,
     GatedTrainingSAEConfig,
+    BatchTopKTrainingSAEConfig,
+    JumpReLUTrainingSAEConfig,
     LoggingConfig,
 )
 
@@ -58,55 +60,91 @@ from lightning.pytorch.callbacks import (
     ModelCheckpoint,
 )
 
+from fairseq2.data.text.tokenizers import get_text_tokenizer_hub
+
+from sonar.models.sonar_text import (
+    get_sonar_text_decoder_hub,
+    get_sonar_text_encoder_hub,
+)
+
+from sonar.models.sonar_translation import SonarEncoderDecoderModel
+
+import torch
+
+torch.set_float32_matmul_precision("high")
+
 # %%
 # Setup for notebook or script execution
 if is_notebook():
     WORKSPACE_DIR = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGER_NAME = "gated-16384-lr_coef=2-e2"
+    LOGGER_NAME = "gated-detach-norm-aux-clip-16384-lr=1-e3-l1_coefficient=5e-5"
 
-    mode = "load_from_dict"  # "load_from_dict"
+    mode = "load_from_checkpoint"  # "load_from_dict" | "load_from_checkpoint"
 
     sys.argv = [
         "main.py",
         "--workspace",
         WORKSPACE_DIR,
-        "--debug",
+        # "--debug",
         "--mode",
         mode,
     ]
 
     # mode=training
-    if mode == "load_from_dict":
+    SAE_TYPE = "gated"  # "gated" or "batch_top_k"
+
+    sys.argv += [
+        # Training hyperparameters
+        "--sae_type",
+        SAE_TYPE,
+        "--d_sae",
+        "16384",
+        "--total_training_batches",
+        "30_000",
+        "--lr",
+        "0.00005",
+        "--lr_warm_up_steps",
+        "3_000",
+        "--lr_decay_steps",
+        "6_000",
+        "--batch_size",
+        "128",
+        "--accumulate_grad_batches",
+        "32",
+        "--device",
+        "3",
+        # WANDB
+        "--logger_dir",
+        f"{WORKSPACE_DIR}/experiments/sonar_sae",
+        "--logger_name",
+        LOGGER_NAME,
+        # Checkpoints
+        "--checkpoints_dir",
+        f"{WORKSPACE_DIR}/experiments/sonar_sae/checkpoints",
+    ]
+
+    if SAE_TYPE == "gated":
         sys.argv += [
-            # Training hyperparameters
-            "--d_sae",
-            "16384",
             "--l1_coefficient",
-            "0.05",
+            "0.026",
             "--l1_warm_up_steps",
             "3_000",
-            "--total_training_batches",
-            "30_000",
-            "--lr",
-            "0.00005",
-            "--lr_warm_up_steps",
-            "3_000",
-            "--lr_decay_steps",
-            "6_000",
-            "--batch_size",
-            "4096",
-            "--accumulate_grad_batches",
-            "1",
-            "--devices",
-            "3",
-            # WANDB
-            "--logger_dir",
-            f"{WORKSPACE_DIR}/experiments/sonar_sae",
-            "--logger_name",
-            LOGGER_NAME,
-            # Checkpoints
-            "--checkpoints_dir",
-            f"{WORKSPACE_DIR}/experiments/sonar_sae/checkpoints",
+        ]
+    elif SAE_TYPE == "batch_top_k":
+        sys.argv += [
+            "--k",
+            "96",
+        ]
+    elif SAE_TYPE == "jump_relu":
+        sys.argv += [
+            "--l0_coefficient",
+            "5",
+        ]
+
+    if mode == "load_from_checkpoint":
+        sys.argv += [
+            "--checkpoint_filename",
+            f"{WORKSPACE_DIR}/experiments/sonar_sae/checkpoints/tk4tyu7f/epoch=9-step=30000.ckpt",
         ]
 
 
@@ -125,18 +163,11 @@ class ArgsConfig(TypedDict):
     then d_sae = 16 * 1024 = 16384
     """
 
+    sae_type: Literal["gated", "batch_top_k", "jump_relu"]
+
     total_training_batches: int
     """
     take into account the accumulate_grad_batches
-    """
-
-    l1_coefficient: float
-
-    l1_warm_up_steps: int
-    """
-    e.g.: if total_training_steps = 30_000, and you want to warm up
-    L1 regularization over the 5% of training steps,
-    then l1_warm_up_steps = 0.05 * 30_000 = 1_500
     """
 
     lr_warm_up_steps: int
@@ -161,8 +192,23 @@ class ArgsConfig(TypedDict):
     """
     accumulate_grad_batches: int
 
+    # Training SAE-specific hyperparameters
+
+    ## Gated SAE-specific
+    l1_coefficient: float
+
+    l1_warm_up_steps: int
+    """
+    e.g.: if total_training_steps = 30_000, and you want to warm up
+    L1 regularization over the 5% of training steps,
+    then l1_warm_up_steps = 0.05 * 30_000 = 1_500
+    """
+
+    ## BatchTopK SAE-specific
+    k: int
+
     # Misc
-    devices: list[int]
+    device: int
 
     # WANDB
     logger_dir: str
@@ -170,6 +216,8 @@ class ArgsConfig(TypedDict):
 
     # Checkpoints
     checkpoints_dir: str
+
+    checkpoint_filename: str
 
 
 def parse_args() -> ArgsConfig:
@@ -188,26 +236,23 @@ def parse_args() -> ArgsConfig:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["load_from_dict"],
+        choices=["load_from_dict", "load_from_checkpoint"],
         help="Mode to run the script in",
+    )
+
+    # Training hyperparameters
+
+    parser.add_argument(
+        "--sae_type",
+        type=str,
+        choices=["gated", "batch_top_k", "jump_relu"],
+        help="Type of sparse autoencoder to use",
     )
 
     parser.add_argument(
         "--d_sae",
         type=int,
         help="Dimensionality of the sparse autoencoder bottleneck",
-    )
-
-    parser.add_argument(
-        "--l1_coefficient",
-        type=float,
-        help="Coefficient for L1 regularization",
-    )
-
-    parser.add_argument(
-        "--l1_warm_up_steps",
-        type=int,
-        help="Number of warm-up steps for L1 regularization",
     )
 
     parser.add_argument(
@@ -241,12 +286,40 @@ def parse_args() -> ArgsConfig:
         help="Number of batches to accumulate gradients over",
     )
 
+    # Training SAE-specific hyperparameters
+
+    ## Gated SAE-specific
+    parser.add_argument(
+        "--l1_coefficient",
+        type=float,
+        help="Coefficient for L1 regularization",
+    )
+
+    parser.add_argument(
+        "--l1_warm_up_steps",
+        type=int,
+        help="Number of warm-up steps for L1 regularization",
+    )
+
+    ## BatchTopK SAE-specific
+    parser.add_argument(
+        "--k",
+        type=int,
+        help="Number of top activations to keep in BatchTopK SAE",
+    )
+
+    ## JumpReLU SAE-specific
+    parser.add_argument(
+        "--l0_coefficient",
+        type=float,
+        help="Coefficient for L0 regularization",
+    )
+
     # Misc
     parser.add_argument(
-        "--devices",
+        "--device",
         type=int,
-        nargs="+",
-        help="List of device IDs to use",
+        help="Which GPU to use",
     )
 
     # WANDB
@@ -268,6 +341,12 @@ def parse_args() -> ArgsConfig:
         help="Directory to save checkpoints",
     )
 
+    parser.add_argument(
+        "--checkpoint_filename",
+        type=str,
+        help="Path to checkpoint file",
+    )
+
     args = parser.parse_args()
 
     return ArgsConfig(**vars(args))
@@ -275,6 +354,22 @@ def parse_args() -> ArgsConfig:
 
 args = parse_args()
 pprint.pprint(args)
+
+# %% TODO remove
+
+# a = torch.load(
+#     "/workspace/ALGOVERSE/UJR/jason/experiments/sonar_sae/checkpoints/gkkzzviw/epoch=9-step=29516 copy.ckpt",
+#     weights_only=False,
+# )
+# a["state_dict"] = {
+#     k: v
+#     for k, v in a["state_dict"].items()
+#     if not k.startswith("model.")
+# }
+# torch.save(
+#     a,
+#     "/workspace/ALGOVERSE/UJR/jason/experiments/sonar_sae/checkpoints/gkkzzviw/epoch=9-step=29516-fixed.ckpt",
+# )
 
 # %%
 # Load dataset
@@ -303,19 +398,53 @@ if args["debug"]:
 # %%
 # Set up SAE model
 
-cfg = LanguageModelSAERunnerConfig(
-    # Data Generating Function (Model + Training Distribution)
-    # ignored, since we use our own dataset
-    # SAE Parameters are in the nested `sae` config
-    sae=GatedTrainingSAEConfig(
+if args["sae_type"] == "gated":
+    sae_cfg = GatedTrainingSAEConfig(
         d_in=1024,
         d_sae=args["d_sae"],
         apply_b_dec_to_input=True,
         normalize_activations="none",  # TODO: implementation
         l1_coefficient=args["l1_coefficient"],
         l1_warm_up_steps=args["l1_warm_up_steps"],
+        # l1_warm_up_steps=args["total_training_batches"],
         normalize_decoder=True,
-    ),
+        # Misc
+        device=f"cuda:{args['device']}",
+    )
+elif args["sae_type"] == "batch_top_k":
+    sae_cfg = BatchTopKTrainingSAEConfig(
+        d_in=1024,
+        d_sae=args["d_sae"],
+        apply_b_dec_to_input=True,
+        normalize_activations="none",  # TODO: implementation
+        k=args["k"],
+        # Misc
+        device=f"cuda:{args['device']}",
+    )
+elif args["sae_type"] == "jump_relu":
+    sae_cfg = JumpReLUTrainingSAEConfig(
+        d_in=1024,
+        d_sae=args["d_sae"],
+        apply_b_dec_to_input=True,
+        l0_coefficient=args["l0_coefficient"],  # Sparsity penalty coefficient
+        jumprelu_sparsity_loss_mode="tanh",
+        jumprelu_tanh_scale=4.0,  # default value
+        jumprelu_bandwidth=2.0,
+        jumprelu_init_threshold=0.1,
+        pre_act_loss_coefficient=3e-6,
+        # Anthropic's settings assume normalized activations
+        normalize_activations="expected_average_only_in",
+        # Anthropic recommends using the full training steps for the warm-up
+        l0_warm_up_steps=args["total_training_batches"],
+        # Misc
+        device=f"cuda:{args['device']}",
+    )
+
+cfg = LanguageModelSAERunnerConfig(
+    # Data Generating Function (Model + Training Distribution)
+    # ignored, since we use our own dataset
+    # SAE Parameters are in the nested `sae` config
+    sae=sae_cfg,
     # Training hyperparameters (standard)
     lr=args["lr"],
     lr_warm_up_steps=args["lr_warm_up_steps"],
@@ -337,8 +466,11 @@ cfg = LanguageModelSAERunnerConfig(
         run_name=args["logger_name"],
         wandb_log_frequency=30,
         # wandb_log_frequency=1,  # TODO: remove
-        eval_every_n_wandb_logs=20,
+        eval_every_n_wandb_logs=(
+            args["total_training_batches"] // 10
+        ),  # n_checkpoints=10
     ),
+    # feature_sampling_window=100,  # TOOD: remove
     # Misc
     n_checkpoints=10,
 )
@@ -348,13 +480,28 @@ sae = TrainingSAE.from_dict(
 )
 
 # %%
+# Load model
+
+tokenizer_hub = get_text_tokenizer_hub()
+encoder_hub = get_sonar_text_encoder_hub()
+encoder = encoder_hub.load(name_or_card="text_sonar_basic_encoder")
+encoder_tokenizer = tokenizer_hub.load(name_or_card="text_sonar_basic_encoder")
+decoder_hub = get_sonar_text_decoder_hub()
+decoder = decoder_hub.load(name_or_card="text_sonar_basic_decoder")
+decoder_tokenizer = tokenizer_hub.load(name_or_card="text_sonar_basic_decoder")
+model = SonarEncoderDecoderModel(encoder=encoder, decoder=decoder)
+
+# %%
 # Set up full model
 
-if args["mode"] == "load_from_dict":
-    model = LitModel(
-        sae=sae,
-        cfg=cfg.to_sae_trainer_config(),
-    )
+lit_model = LitModel(
+    # cfg=cfg.to_sae_trainer_config(),
+    cfg=cfg,
+    model=model,
+    encoder_tokenizer=encoder_tokenizer,
+    decoder_tokenizer=decoder_tokenizer,
+    sae=sae,
+)
 
 # %%
 # Set up logger
@@ -371,30 +518,50 @@ wandb_logger.experiment.config.update(cfg.to_dict())
 # Set up trainer
 print("Setting up trainer...")
 
+if args["sae_type"] == "batch_top_k":
+    monitor = "model_performance_preservation.ce_loss_score"
+    mode = "max"
+else:
+    monitor = "metrics/l0"
+    mode = "min"
+
 checkpoint_callback = ModelCheckpoint(
     dirpath=f"{args['checkpoints_dir']}/{wandb_logger.experiment.id}",
-    save_top_k=-1,
-    every_n_train_steps=(args["total_training_batches"] // cfg.n_checkpoints),
-    # every_n_train_steps=1,  # TODO: remove
+    # monitor="model_performance_preservation.ce_loss_score",
+    # mode="max",
+    # monitor="metrics/l0",
+    # mode="min",
+    monitor=monitor,
+    mode=mode,
+    save_top_k=1,
+    save_last=True,
+    # every_n_train_steps=(args["total_training_batches"] // cfg.n_checkpoints),
+    # every_n_train_steps=2,  # TODO: remove
 )
 
 trainer = L.Trainer(
     # Misc
     accelerator="gpu",
-    devices=args["devices"],
+    devices=[args["device"]],
     precision="bf16-mixed",
     accumulate_grad_batches=args["accumulate_grad_batches"],
+    gradient_clip_val=1.0,
+    gradient_clip_algorithm="norm",
     callbacks=[checkpoint_callback],
     logger=wandb_logger,
     log_every_n_steps=cfg.logger.wandb_log_frequency,
+    val_check_interval=0.25,
+    # val_check_interval=1 * args["accumulate_grad_batches"],  # TODO: remove
     max_steps=args["total_training_batches"],
-    # max_steps=100, # TODO: remove
+    # max_steps=35000,  # TODO: remove
     # reload_dataloaders_every_n_epochs=1,
 )
 
 trainer.fit(
-    model=model,
+    model=lit_model,
     datamodule=data_module,
+    # ckpt_path="/workspace/ALGOVERSE/UJR/jason/experiments/sonar_sae/checkpoints/gkkzzviw/epoch=9-step=29516-fixed.ckpt",
+    ckpt_path=args["checkpoint_filename"],
 )
 
 # %%

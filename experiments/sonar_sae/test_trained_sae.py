@@ -34,15 +34,31 @@ from argparse import ArgumentParser
 
 import torch
 
+import fairseq2
+
+fairseq2.setup_fairseq2()
+
+from fairseq2.data.text.tokenizers import TextTokenizer, get_text_tokenizer_hub
+
 from sonar.inference_pipelines.text import (
     TextToEmbeddingModelPipeline,
     EmbeddingToTextModelPipeline,
+)
+
+from sonar.models.sonar_translation import SonarEncoderDecoderModel
+
+from sonar.models.sonar_text import (
+    get_sonar_text_decoder_hub,
+    get_sonar_text_encoder_hub,
 )
 
 from sae_lens import (
     TrainingSAE,
     TrainingSAEConfig,
     GatedTrainingSAEConfig,
+    BatchTopKTrainingSAEConfig,
+    JumpReLUTrainingSAEConfig,
+    LanguageModelSAERunnerConfig,
 )
 
 # %%
@@ -50,23 +66,40 @@ from sae_lens import (
 
 if is_notebook():
     WORKSPACE = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGED_ID = "tk4tyu7f"
+    LOGGED_ID = "0egv5ksr"
+    SAE_TYPE = "gated"
+    CHECKPOINT_NAME = "epoch=9-step=30000"
     sys.argv = [
         "test_trained_sae.py",
+        "--sae_type",
+        SAE_TYPE,
         # Hyperparameters
         "--d_sae",
         "16384",
         # Checkpoint
         "--checkpoint_filename",
-        f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGED_ID}/epoch=9-step=30000.ckpt",
+        f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGED_ID}/{CHECKPOINT_NAME}.ckpt",
         # Misc
         "--device",
-        "cuda:1",
+        # "cuda:2",
+        "cpu",
     ]
+
+    if SAE_TYPE == "batch_top_k":
+        sys.argv += [
+            "--k",
+            96,
+        ]
 
 
 def parse_args():
     parser = ArgumentParser()
+
+    parser.add_argument(
+        "--sae_type",
+        type=str,
+        help="Type of SAE to use",
+    )
 
     # Hyperparameters
     parser.add_argument(
@@ -98,90 +131,164 @@ args = parse_args()
 print("Arguments:")
 pprint.pprint(args)
 
-
 # %%
-# Load text2vec model
+# Load model
 
-text2vec_model = TextToEmbeddingModelPipeline(
-    encoder="text_sonar_basic_encoder",
-    tokenizer="text_sonar_basic_encoder",
-    device=torch.device(f"{args['device']}"),
+tokenizer_hub = get_text_tokenizer_hub()
+encoder_hub = get_sonar_text_encoder_hub()
+encoder = encoder_hub.load(
+    "text_sonar_basic_encoder", device=torch.device(args["device"])
 )
-
-# %%
-# Load vec2text model
-
-vec2text_model = EmbeddingToTextModelPipeline(
-    decoder="text_sonar_basic_decoder",
-    tokenizer="text_sonar_basic_decoder",
-    device=torch.device(f"{args['device']}"),
+encoder_tokenizer = tokenizer_hub.load("text_sonar_basic_encoder")
+decoder_hub = get_sonar_text_decoder_hub()
+decoder = decoder_hub.load(
+    "text_sonar_basic_decoder", device=torch.device(args["device"])
 )
+decoder_tokenizer = tokenizer_hub.load("text_sonar_basic_decoder")
 
+model = SonarEncoderDecoderModel(encoder=encoder, decoder=decoder)
 
 # %%
 # Set up SAE model
 
-cfg = GatedTrainingSAEConfig(
-    d_in=1024,
-    d_sae=args["d_sae"],
-    apply_b_dec_to_input=True,
-    normalize_activations="none",  # TODO: implementation
+if args["sae_type"] == "gated":
+    sae_cfg = GatedTrainingSAEConfig(
+        d_in=1024,
+        d_sae=args["d_sae"],
+        apply_b_dec_to_input=True,
+        normalize_activations="none",  # TODO: implementation
+        device=args["device"],
+    )
+elif args["sae_type"] == "batch_top_k":
+    sae_cfg = BatchTopKTrainingSAEConfig(
+        d_in=1024,
+        d_sae=args["d_sae"],
+        apply_b_dec_to_input=True,
+        normalize_activations="none",  # TODO: implementation
+        k=args["k"],
+        device=args["device"],
+    )
+elif args["sae_type"] == "jump_relu":
+    sae_cfg = JumpReLUTrainingSAEConfig(
+        d_in=1024,
+        d_sae=args["d_sae"],
+        apply_b_dec_to_input=True,
+        normalize_activations="expected_average_only",  # TODO: implementation
+        device=args["device"],
+    )
+
+cfg = LanguageModelSAERunnerConfig(
+    sae=sae_cfg,
 )
 
-
 sae = TrainingSAE.from_dict(
-    config_dict=TrainingSAEConfig.from_dict(cfg.to_dict()).to_dict()
+    config_dict=TrainingSAEConfig.from_dict(cfg.get_training_sae_cfg_dict()).to_dict()
 )
 
 
 # %%
+# Load trained model
 
-model = LitModel.load_from_checkpoint(
+lit_model = LitModel.load_from_checkpoint(
     checkpoint_path=args["checkpoint_filename"],
     map_location=args["device"],
+    model=model,
+    encoder_tokenizer=encoder_tokenizer,
+    decoder_tokenizer=decoder_tokenizer,
     sae=sae,
 )
 
+# TODO: remove
+# lit_model = LitModel(
+#     cfg=cfg,
+#     model=model,
+#     encoder_tokenizer=encoder_tokenizer,
+#     decoder_tokenizer=decoder_tokenizer,
+#     sae=sae,
+# )
+# lit_model.to(torch.device(args["device"]))
+
 
 # Disable randomness, dropout, etc
-model.eval()
+lit_model.eval()
 
+# %%
+# TODO: remove this later
+
+# texts = [
+#     "halo dunia",
+#     "halo dunia",
+# ]
+# langs = ["ind_Latn", "ind_Latn"]
+texts = [
+    "hello world",
+    "hello world",
+]
+langs = ["eng_Latn", "eng_Latn"]
+
+tokens, padding_mask = lit_model.tokenize_text(texts=texts, langs=langs)
+embeddings = lit_model.encode_text(seqs=tokens, padding_mask=padding_mask)
+
+target_seqs = lit_model.get_target_seqs(
+    # texts=["halo dunia", "halo dunia"],
+    # langs=["ind_Latn", "ind_Latn"],
+    texts=texts,
+    langs=langs,
+)
+
+logits, padded = lit_model.get_logits(embeddings=embeddings, target_seqs=target_seqs)
+
+losses, n_toks = lit_model.get_decoder_loss(
+    logits=logits,
+    padded=padded,
+)
+print(losses)
+print(n_toks)
+avg_loss = losses.sum() / n_toks.sum()
+print(f"Avg loss: {avg_loss.item():.6f}")
 
 # %%
 # Test
 
 texts = [
-    "Despite the algorithm's polynomial time complexity, pathological edge cases can induce exponential slowdowns.",
-    "In the midst of existential uncertainty, the philosopher pondered the ineffability of consciousness.",
-    "Heisenberg's uncertainty principle imposes fundamental limits on simultaneous measurements of position and momentum.",
-    "Interpretasi multisemesta menimbulkan pertanyaan ontologis tentang hakikat kenyataan itu sendiri.",
-    "Paradoks Schrödinger menyoroti ketidakpastian eksistensi melalui eksperimen kucing yang terkenal itu.",
+    # "Despite the algorithm's polynomial time complexity, pathological edge cases can induce exponential slowdowns.",
+    # "In the midst of existential uncertainty, the philosopher pondered the ineffability of consciousness.",
+    # "Heisenberg's uncertainty principle imposes fundamental limits on simultaneous measurements of position and momentum.",
+    # "Interpretasi multisemesta menimbulkan pertanyaan ontologis tentang hakikat kenyataan itu sendiri.",
+    # "Paradoks Schrödinger menyoroti ketidakpastian eksistensi melalui eksperimen kucing yang terkenal itu.",
+    "Time flies.",
+    "Flying time.",
+    "Cats chase mice.",
+    "Mice chase cats.",
+    "Quantum leaps.",
 ]
 
-lang = [
+langs = [
     "eng_Latn",
     "eng_Latn",
     "eng_Latn",
-    "ind_Latn",
-    "ind_Latn",
+    "eng_Latn",
+    "eng_Latn",
 ]
 
 batch_size = len(texts)
 
-embeddings = text2vec_model.predict(
-    input=texts,
-    source_lang=lang,
+tokens, padding_mask = lit_model.tokenize_text(
+    texts=texts,
+    langs=langs,
 )
 
-reconstructions = model.sae(embeddings)
+embeddings = lit_model.encode_text(seqs=tokens, padding_mask=padding_mask)
 
-# MSE difference
-mse_with_sae = torch.mean((embeddings - reconstructions) ** 2).item()
+reconstructed_embeddings = lit_model.sae(embeddings)
+
+# MSE
+mse_with_sae = torch.mean((embeddings - reconstructed_embeddings) ** 2).item()
 print(f"MSE with SAE: {mse_with_sae:.6f}")
 
-reconstructed_texts = vec2text_model.predict(
-    inputs=torch.cat([embeddings, reconstructions], dim=0),
-    target_lang=lang + lang,
+reconstructed_texts = lit_model.decode_embedding(
+    embeddings=torch.cat([embeddings, reconstructed_embeddings], dim=0),
+    target_lang=langs + langs,
 )
 
 for i in range(batch_size):
