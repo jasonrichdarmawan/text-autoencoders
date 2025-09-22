@@ -9,9 +9,10 @@ from .preprocess_lingala_songs import *
 from .preprocess_menyo20k import *
 from .preprocess_minangnlp import *
 from .preprocess_mukiibi import *
-from .preprocess_nynorsk_memories import *
 from .preprocess_umsuka import *
+from .preprocess_aau import *
 from .preprocess_nllb_seed import *
 
+from .preprocess_nynorsk_memories import *
 from .preprocess_tico import *
 from .preprocess_indic_nlp import *

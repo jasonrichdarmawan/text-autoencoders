@@ -58,10 +58,12 @@ from pnpd_utils import (
     preprocess_menyo20k,
     preprocess_minangnlp,
     preprocess_mukiibi,
-    preprocess_nynorsk_memories,
     preprocess_umsuka,
+    preprocess_aau,
+
     preprocess_nllb_seed,
 
+    preprocess_nynorsk_memories,
     preprocess_tico,
     preprocess_indic_nlp,
 )
@@ -138,10 +140,11 @@ def parse_args():
             "menyo20k",
             "minangnlp",
             "mukiibi",
-            "nynorsk_memories",
             "umsuka",
-            "NLLB-Seed",
+            "aau",
 
+            "NLLB-Seed",
+            "nynorsk_memories",
             "tico",
             "indic_nlp",
         ],
@@ -303,6 +306,8 @@ if args["mode"] == "save_to_disk":
         )
     elif args["dataset_name"] == "umsuka":
         data = preprocess_umsuka(directory=f"{args['data_dir']}/{args['dataset_name']}")
+    elif args["dataset_name"] == "aau":
+        data = preprocess_aau(directory=f"{args['data_dir']}/{args['dataset_name']}")
     elif args["dataset_name"] == "NLLB-Seed":
         data = preprocess_nllb_seed(
             directory=f"{args['data_dir']}/{args['dataset_name']}"
