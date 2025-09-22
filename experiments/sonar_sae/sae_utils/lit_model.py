@@ -304,6 +304,16 @@ class LitModel(L.LightningModule):
         return per_sent_loss, per_sent_toks
 
     def on_save_checkpoint(self, checkpoint):
+        """
+        Partial code from sae_lens.training.sae_trainer.SAETrainer.fit
+        """
+        # fold the estimated norm scaling into the weights
+        if self.activation_scaler.scaling_factor is not None:
+            scaling_factor = self.activation_scaler.scaling_factor
+            checkpoint["state_dict"]["sae.W_enc"] *= scaling_factor
+            checkpoint["state_dict"]["sae.b_dec"] /= scaling_factor
+            checkpoint["state_dict"]["sae.W_dec"] /= scaling_factor
+
         checkpoint["state_dict"] = {
             k: v for k, v in self.state_dict().items() if not k.startswith("model.")
         }
@@ -359,7 +369,9 @@ class LitModel(L.LightningModule):
                 ),
             )
             rank_zero_only(
-                f"Estimated activation scaling factor: {self.activation_scaler.scaling_factor}"
+                print(
+                    f"Estimated activation scaling factor: {self.activation_scaler.scaling_factor}"
+                )
             )
 
     def train_embedding_iterator(self):
@@ -382,14 +394,6 @@ class LitModel(L.LightningModule):
                 ],
                 dim=0,
             )
-
-    def on_fit_end(self):
-        # fold the estimated norm scaling into the weights
-        if self.activation_scaler.scaling_factor is not None:
-            self.sae.fold_activation_norm_scaling_factor(
-                scaling_factor=self.activation_scaler.scaling_factor
-            )
-            self.activation_scaler.scaling_factor = None
 
     def training_step(
         self,
@@ -698,6 +702,14 @@ class LitModel(L.LightningModule):
             # https://github.com/saprmarks/dictionary_learning/blob/main/evaluation.py
             x_hat_norm_squared = torch.norm(flattened_sae_out, dim=-1) ** 2
             x_dot_x_hat = (flattened_sae_input * flattened_sae_out).sum(dim=-1)
+            # if relative reconstruction bias is much greater than 1,
+            # it means the reconstructed vectors (x_hat) have much larger
+            # norm than the input (x)
+            # if x_hat is not well aligned with x (i.e. points in the different direction),
+            # then the dot product x . x_hat will be much smaller than ||x_hat||^2
+            # for example, if x_hat is nearly orthogonal to x, x . x_hat can be close to zero,
+            # making the ratio very large
+            # if x_hat points in the opposite direction, x . x_hat can even be negative
             relative_reconstruction_bias = (
                 x_hat_norm_squared.mean() / x_dot_x_hat.mean()
             ).unsqueeze(0)

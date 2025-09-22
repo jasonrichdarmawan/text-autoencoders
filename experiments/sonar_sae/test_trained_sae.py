@@ -66,9 +66,10 @@ from sae_lens import (
 
 if is_notebook():
     WORKSPACE = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGED_ID = "0egv5ksr"
-    SAE_TYPE = "gated"
-    CHECKPOINT_NAME = "epoch=9-step=30000"
+    LOGGER_ID = "mffcsqri"
+    SAE_TYPE = "jumprelu"
+    # CHECKPOINT_NAME = "last"
+    CHECKPOINT_NAME = "epoch=9-step=29544"
     sys.argv = [
         "test_trained_sae.py",
         "--sae_type",
@@ -78,17 +79,17 @@ if is_notebook():
         "16384",
         # Checkpoint
         "--checkpoint_filename",
-        f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGED_ID}/{CHECKPOINT_NAME}.ckpt",
+        f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGER_ID}/{CHECKPOINT_NAME}.ckpt",
         # Misc
         "--device",
-        # "cuda:2",
-        "cpu",
+        "cuda:1",
+        # "cpu",
     ]
 
-    if SAE_TYPE == "batch_top_k":
+    if SAE_TYPE == "batchtopk":
         sys.argv += [
             "--k",
-            96,
+            "96",
         ]
 
 
@@ -107,6 +108,13 @@ def parse_args():
         type=int,
         required=True,
         help="Dimensionality of the SAE latent space",
+    )
+
+    # Architecture-specific hyperparameters
+    parser.add_argument(
+        "--k",
+        type=int,
+        help="Top-k for BatchTopK SAE",
     )
 
     # Checkpoints
@@ -159,7 +167,7 @@ if args["sae_type"] == "gated":
         normalize_activations="none",  # TODO: implementation
         device=args["device"],
     )
-elif args["sae_type"] == "batch_top_k":
+elif args["sae_type"] == "batchtopk":
     sae_cfg = BatchTopKTrainingSAEConfig(
         d_in=1024,
         d_sae=args["d_sae"],
@@ -168,12 +176,12 @@ elif args["sae_type"] == "batch_top_k":
         k=args["k"],
         device=args["device"],
     )
-elif args["sae_type"] == "jump_relu":
+elif args["sae_type"] == "jumprelu":
     sae_cfg = JumpReLUTrainingSAEConfig(
         d_in=1024,
         d_sae=args["d_sae"],
         apply_b_dec_to_input=True,
-        normalize_activations="expected_average_only",  # TODO: implementation
+        normalize_activations="expected_average_only_in",  # TODO: implementation
         device=args["device"],
     )
 
@@ -221,13 +229,15 @@ lit_model.eval()
 # ]
 # langs = ["ind_Latn", "ind_Latn"]
 texts = [
+    "Mice chase cats.",
     "hello world",
-    "hello world",
+    "There are two methods to proceed.",
 ]
-langs = ["eng_Latn", "eng_Latn"]
+langs = ["eng_Latn", "eng_Latn", "eng_Latn"]
 
 tokens, padding_mask = lit_model.tokenize_text(texts=texts, langs=langs)
 embeddings = lit_model.encode_text(seqs=tokens, padding_mask=padding_mask)
+embeddings = lit_model.sae(embeddings)
 
 target_seqs = lit_model.get_target_seqs(
     # texts=["halo dunia", "halo dunia"],
@@ -242,10 +252,16 @@ losses, n_toks = lit_model.get_decoder_loss(
     logits=logits,
     padded=padded,
 )
-print(losses)
-print(n_toks)
+print("losses:", losses)
+print("n_toks:", n_toks)
 avg_loss = losses.sum() / n_toks.sum()
 print(f"Avg loss: {avg_loss.item():.6f}")
+
+reconstructed_texts = lit_model.decode_embedding(
+    embeddings=embeddings,
+    target_lang=langs,
+)
+print("reconstructed_texts:", reconstructed_texts)
 
 # %%
 # Test

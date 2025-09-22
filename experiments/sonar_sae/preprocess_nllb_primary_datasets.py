@@ -61,6 +61,8 @@ from pnpd_utils import (
     preprocess_nynorsk_memories,
     preprocess_umsuka,
     preprocess_nllb_seed,
+
+    preprocess_indic_nlp,
 )
 
 import pprint
@@ -138,6 +140,8 @@ def parse_args():
             "nynorsk_memories",
             "umsuka",
             "NLLB-Seed",
+
+            "indic_nlp",
         ],
         help="Name of the dataset to process",
     )
@@ -304,6 +308,11 @@ if args["mode"] == "save_to_disk":
         data = preprocess_nllb_seed(
             directory=f"{args['data_dir']}/{args['dataset_name']}"
         )
+    elif args["dataset_name"] == "indic_nlp":
+        data = preprocess_indic_nlp(
+            directory=f"{args['data_dir']}/{args['dataset_name']}/finalrepo",
+            split="train",
+        )
     else:
         raise ValueError(f"Unsupported dataset: {args['dataset_name']}")
     dataset = Dataset.from_list(mapping=data, features=features)
@@ -449,3 +458,4 @@ if args["mode"] == "verify":
     )
 
 # %%
+
