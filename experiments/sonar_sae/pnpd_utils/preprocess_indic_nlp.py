@@ -34,7 +34,7 @@ def preprocess_indic_nlp(directory: str, split: str):
     for dataset_path in os.listdir(f"{directory}/{split}"):
         langpair_path = f"{directory}/{split}/{dataset_path}"
         if os.path.isdir(langpair_path) is False:
-            return
+            continue
         for langpair in os.listdir(langpair_path):
             lang_1, lang_2 = langpair.split("-")
             with open(
