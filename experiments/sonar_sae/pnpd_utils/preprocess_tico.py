@@ -33,7 +33,7 @@ LANG_MAP = {
     "prs": "prs_Arab",
     "pus": "pbt_Arab",
     "som": "som_Latn",
-    "swh": "swa_Latn",
+    "swh": "swh_Latn",
     "tam": "tam_Taml",
     "tgl": "tgl_Latn",
     "tir_ER": "tir_Ethi",
