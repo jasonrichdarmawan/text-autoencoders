@@ -8,7 +8,7 @@ if [ "$MODE" == "save_to_disk" ]; then
         --cudaId $CUDA_ID \
         --dataset_name $DATASET_NAME \
         --data_loader_batch_size 128 \
-        --predict_batch_size 8 \
+        --predict_batch_size 64 \
         --num_shards $NUM_SHARDS \
         --shard_idx $SHARD_IDX \
         --save_dir $SAVE_DIR"

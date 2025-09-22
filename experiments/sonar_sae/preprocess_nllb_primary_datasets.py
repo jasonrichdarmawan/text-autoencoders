@@ -37,8 +37,8 @@ except Exception:
 
 import sys
 
-sys.path.insert(0, "/workspace/ALGOVERSE/UJR/jason/SONAR")
-sys.path.insert(0, "/workspace/ALGOVERSE/UJR/jason/SAELens")
+sys.path.insert(0, "/home/test/jason/SONAR")
+sys.path.insert(0, "/home/test/jason/SAELens")
 
 
 # %%
@@ -62,6 +62,7 @@ from pnpd_utils import (
     preprocess_umsuka,
     preprocess_nllb_seed,
 
+    preprocess_tico,
     preprocess_indic_nlp,
 )
 
@@ -141,6 +142,7 @@ def parse_args():
             "umsuka",
             "NLLB-Seed",
 
+            "tico",
             "indic_nlp",
         ],
         help="Name of the dataset to process",
@@ -188,6 +190,8 @@ if is_notebook():
         "preprocess_nllb_primary_datasets.py",
         "--mode",
         MODE,
+        "--cudaId",
+        "0",
     ]
 
     if MODE == "save_to_disk":
@@ -209,11 +213,6 @@ if is_notebook():
             "0",
             "--save_dir",
             f"{WORKSPACE}/data/nllb/primary_datasets/processed",
-        ]
-    elif MODE == "verify":
-        sys.argv += [
-            "--cudaId",
-            "3",
         ]
 
 args = parse_args()
@@ -306,6 +305,10 @@ if args["mode"] == "save_to_disk":
         data = preprocess_umsuka(directory=f"{args['data_dir']}/{args['dataset_name']}")
     elif args["dataset_name"] == "NLLB-Seed":
         data = preprocess_nllb_seed(
+            directory=f"{args['data_dir']}/{args['dataset_name']}"
+        )
+    elif args["dataset_name"] == "tico":
+        data = preprocess_tico(
             directory=f"{args['data_dir']}/{args['dataset_name']}"
         )
     elif args["dataset_name"] == "indic_nlp":
