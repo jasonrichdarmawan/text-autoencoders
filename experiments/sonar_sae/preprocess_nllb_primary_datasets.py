@@ -10,12 +10,11 @@ Note:
 1. At the time of writing, the `download_parallel_corpora.py` script unable to download the `Xhosa Navy` and `Bianet` datasets
 2. We do not process `orm` language in `aau` dataset because SONAR does not support it
 3. We do not process `orm` and `aar` languages in `hornmt` dataset because SONAR does not support them
+4. We do not process `nde` and `ven` languages in `mburisano` dataset because SONAR does not support them
+5. We do not process `orm` in `tico` dataset because SONAR does not support it
 
 Please remove the following datasets:
-1. because SONAR does not support the languages:
-   3. `mburisano` because of `nde` lang
-   4. `tico` because of `orm` lang
-2. because the datasets are too large to process:
+1. because the datasets are too large to process:
    1. `indic_nlp`
    2. `til`
 """
@@ -61,6 +60,7 @@ from pnpd_utils import (
     preprocess_umsuka,
     preprocess_aau,
     preprocess_hornmt,
+    preprocess_mburisano,
 
     preprocess_nllb_seed,
     preprocess_nynorsk_memories,
@@ -143,6 +143,7 @@ def parse_args():
             "umsuka",
             "aau",
             "hornmt",
+            "mburisano",
 
             "NLLB-Seed",
             "nynorsk_memories",
@@ -311,6 +312,10 @@ if args["mode"] == "save_to_disk":
         data = preprocess_aau(directory=f"{args['data_dir']}/{args['dataset_name']}")
     elif args["dataset_name"] == "hornmt":
         data = preprocess_hornmt(
+            directory=f"{args['data_dir']}/{args['dataset_name']}"
+        )
+    elif args["dataset_name"] == "mburisano":
+        data = preprocess_mburisano(
             directory=f"{args['data_dir']}/{args['dataset_name']}"
         )
     elif args["dataset_name"] == "NLLB-Seed":
