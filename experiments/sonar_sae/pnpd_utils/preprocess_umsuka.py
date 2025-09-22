@@ -20,3 +20,4 @@ def preprocess_umsuka(directory: str):
                     "lang_2": "eng_Latn",
                 }
             )
+    return data
