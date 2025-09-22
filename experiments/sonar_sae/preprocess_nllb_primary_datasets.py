@@ -12,11 +12,8 @@ Note:
 3. We do not process `orm` and `aar` languages in `hornmt` dataset because SONAR does not support them
 4. We do not process `nde` and `ven` languages in `mburisano` dataset because SONAR does not support them
 5. We do not process `orm` in `tico` dataset because SONAR does not support it
-
-Please remove the following datasets:
-1. because the datasets are too large to process:
-   1. `indic_nlp`
-   2. `til`
+6. `indic_nlp` dataset is 3.1 GB before preprocess
+7. `til` dataset is 22.4 GB before preprocess
 """
 
 # %%
@@ -66,6 +63,7 @@ from pnpd_utils import (
     preprocess_nynorsk_memories,
     preprocess_tico,
     preprocess_indic_nlp,
+    preprocess_til,
 )
 
 import pprint
@@ -149,6 +147,7 @@ def parse_args():
             "nynorsk_memories",
             "tico",
             "indic_nlp",
+            "til",
         ],
         help="Name of the dataset to process",
     )
@@ -204,8 +203,6 @@ if is_notebook():
             "--data_dir",
             # f"{WORKSPACE}/data/nllb/primary_datasets/public_data",
             f"{WORKSPACE}/data/nllb/primary_datasets",
-            "--cudaId",
-            "3",
             "--dataset_name",
             "NLLB-Seed",
             "--data_loader_batch_size",
@@ -330,6 +327,10 @@ if args["mode"] == "save_to_disk":
         data = preprocess_indic_nlp(
             directory=f"{args['data_dir']}/{args['dataset_name']}/finalrepo",
             split="train",
+        )
+    elif args["dataset_name"] == "til":
+        data = preprocess_til(
+            directory=f"{args['data_dir']}/{args['dataset_name']}"
         )
     else:
         raise ValueError(f"Unsupported dataset: {args['dataset_name']}")

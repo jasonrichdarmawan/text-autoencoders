@@ -18,3 +18,4 @@ from .preprocess_nllb_seed import *
 from .preprocess_nynorsk_memories import *
 from .preprocess_tico import *
 from .preprocess_indic_nlp import *
+from .preprocess_til import *
