@@ -8,7 +8,7 @@ LANG_MAP = {
     "kn": "kan_Knda",
     "ml": "mal_Mlym",
     "mr": "mar_Deva",
-    "or": "ori_Orya",
+    "or": "ory_Orya",
     "pa": "pan_Guru",
     "ta": "tam_Taml",
     "te": "tel_Telu",
