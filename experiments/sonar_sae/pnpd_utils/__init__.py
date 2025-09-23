@@ -13,6 +13,7 @@ from .preprocess_umsuka import *
 from .preprocess_aau import *
 from .preprocess_hornmt import *
 from .preprocess_mburisano import *
+from .preprocess_xhosa_navy import *
 
 from .preprocess_nllb_seed import *
 from .preprocess_nynorsk_memories import *

@@ -12,8 +12,10 @@ Note:
 3. We do not process `orm` and `aar` languages in `hornmt` dataset because SONAR does not support them
 4. We do not process `nde` and `ven` languages in `mburisano` dataset because SONAR does not support them
 5. We do not process `orm` in `tico` dataset because SONAR does not support it
-6. `indic_nlp` dataset is 3.1 GB before preprocess
-7. `til` dataset is 22.4 GB before preprocess
+6. `indic_nlp` dataset have 11M pairs or estimated 84 GB after preprocess
+7. We do not process `til` dataset. This dataset have 80.6M pairs or estimated 615 GB after preprocess
+8. Please change `download_parallel_corpora.py` download URL for `download_XhosaNavy` to this [link](https://object.pouta.csc.fi/OPUS-XhosaNavy/v1/moses/en-xh.txt.zip)
+9. We do not process the Chichewa News, GELR (Ewe-Eng) and Lorelei datasets because they require an account or login of some kind
 """
 
 # %%
@@ -58,6 +60,7 @@ from pnpd_utils import (
     preprocess_aau,
     preprocess_hornmt,
     preprocess_mburisano,
+    preprocess_xhosa_navy,
 
     preprocess_nllb_seed,
     preprocess_nynorsk_memories,
@@ -142,6 +145,7 @@ def parse_args():
             "aau",
             "hornmt",
             "mburisano",
+            "xhosa_navy",
 
             "NLLB-Seed",
             "nynorsk_memories",
@@ -313,6 +317,10 @@ if args["mode"] == "save_to_disk":
         )
     elif args["dataset_name"] == "mburisano":
         data = preprocess_mburisano(
+            directory=f"{args['data_dir']}/{args['dataset_name']}"
+        )
+    elif args["dataset_name"] == "xhosa_navy":
+        data = preprocess_xhosa_navy(
             directory=f"{args['data_dir']}/{args['dataset_name']}"
         )
     elif args["dataset_name"] == "NLLB-Seed":
