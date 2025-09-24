@@ -342,14 +342,15 @@ class LitModel(L.LightningModule):
             betas=(self.cfg.adam_beta1, self.cfg.adam_beta2),
         )
 
+        accumulate = getattr(self.trainer, "accumulate_grad_batches", 1)
         scheduler = {
             "scheduler": get_lr_scheduler(
                 scheduler_name=self.cfg.lr_scheduler_name,
                 lr=self.cfg.lr,
                 optimizer=optimizer,
-                warm_up_steps=self.cfg.lr_warm_up_steps,
-                decay_steps=self.cfg.lr_decay_steps,
-                training_steps=self.cfg.total_training_steps,
+                warm_up_steps=self.cfg.lr_warm_up_steps // accumulate,
+                decay_steps=self.cfg.lr_decay_steps // accumulate,
+                training_steps=self.cfg.total_training_steps // accumulate,
                 lr_end=self.cfg.lr_end,
                 num_cycles=self.cfg.n_restart_cycles,
             ),
