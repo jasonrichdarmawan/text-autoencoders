@@ -105,6 +105,8 @@ if is_notebook():
     # mode=training
     SAE_TYPE = "gated"  # "gated" or "batchtopk"
 
+    TOTAL_TRAINING_STEPS = 30_000
+
     sys.argv += [
         # Training hyperparameters
         "--sae_type",
@@ -112,13 +114,9 @@ if is_notebook():
         "--d_sae",
         str(WIDTH),
         "--total_training_batches",
-        "30_000",
+        str(TOTAL_TRAINING_STEPS),
         "--lr",
         str(LR),
-        "--lr_warm_up_steps",
-        "3_000",
-        "--lr_decay_steps",
-        "6_000",
         "--batch_size",
         "256",
         "--accumulate_grad_batches",
@@ -137,10 +135,17 @@ if is_notebook():
 
     if SAE_TYPE == "gated":
         sys.argv += [
+            "--lr_warm_up_steps",
+            str(TOTAL_TRAINING_STEPS // 10),  # 10% of training
+            # "0",
+            "--lr_decay_steps",
+            str(TOTAL_TRAINING_STEPS // 5), # 20% of training
+            # "0",
             "--l1_coefficient",
             str(L1_COEFFICIENT),
             "--l1_warm_up_steps",
-            "3_000",
+            str(TOTAL_TRAINING_STEPS // 10),  # 10% of training
+            # "0",
         ]
     elif SAE_TYPE == "batchtopk":
         sys.argv += [
@@ -149,8 +154,14 @@ if is_notebook():
         ]
     elif SAE_TYPE == "jump_relu":
         sys.argv += [
+            # Anthropic recommends decaying the LR for the final 20% of training
+            "--lr_decay_steps",
+            str(TOTAL_TRAINING_STEPS // 5),  # 20% of training
             "--l0_coefficient",
             "5",
+            # Anthropic recommends using the full training steps for the warm-up
+            "--l0_warm_up_steps",
+            str(TOTAL_TRAINING_STEPS),  # full training
         ]
 
     if mode == "load_from_checkpoint":
@@ -319,6 +330,11 @@ def parse_args() -> ArgsConfig:
         type=float,
         help="Coefficient for L0 regularization",
     )
+    parser.add_argument(
+        "--l0_warm_up_steps",
+        type=int,
+        help="Number of warm-up steps for L0 regularization",
+    )
 
     # Misc
     parser.add_argument(
@@ -440,7 +456,7 @@ elif args["sae_type"] == "jump_relu":
         # Anthropic's settings assume normalized activations
         normalize_activations="expected_average_only_in",
         # Anthropic recommends using the full training steps for the warm-up
-        l0_warm_up_steps=args["total_training_batches"],
+        l0_warm_up_steps=args["l0_warm_up_steps"],
         # Misc
         device=f"cuda:{args['device']}",
     )
@@ -452,9 +468,9 @@ cfg = LanguageModelSAERunnerConfig(
     sae=sae_cfg,
     # Training hyperparameters (standard)
     lr=args["lr"],
-    lr_warm_up_steps=args["lr_warm_up_steps"],
+    lr_warm_up_steps=args["lr_warm_up_steps"] or 0,
     # lr_warm_up_steps=0,  # TODO: remove
-    lr_decay_steps=args["lr_decay_steps"],
+    lr_decay_steps=args["lr_decay_steps"] or 0,
     training_tokens=(
         args["total_training_batches"]
         * args["batch_size"]

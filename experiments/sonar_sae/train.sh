@@ -8,12 +8,10 @@ CMD="python $(dirname "$0")/train.py \
     --mode $MODE"
 
 CMD="$CMD --d_sae $D_SAE \
-    --total_training_batches 30_000 \
+    --total_training_batches $TOTAL_TRAINING_BATCHES \
     --lr $LR \
-    --lr_warm_up_steps 3_000 \
-    --lr_decay_steps 6_000 \
-    --batch_size 128 \
-    --accumulate_grad_batches 32 \
+    --batch_size $BATCH_SIZE \
+    --accumulate_grad_batches $ACCUMULATE_GRAD_BATCHES \
     \
     --device $CUDA_ID \
     \
@@ -24,14 +22,18 @@ CMD="$CMD --d_sae $D_SAE \
 
 if [ "$SAE_TYPE" == "gated" ]; then
     CMD="$CMD --sae_type gated \
+        --lr_warm_up_steps $LR_WARM_UP_STEPS \
+        --lr_decay_steps $LR_DECAY_STEPS \
         --l1_coefficient $L1_COEFFICIENT \
-        --l1_warm_up_steps 3_000"
+        --l1_warm_up_steps $L1_WARM_UP_STEPS"
 elif [ "$SAE_TYPE" == "batchtopk" ]; then
     CMD="$CMD --sae_type batchtopk \
         --k $K"
 elif [ "$SAE_TYPE" == "jump_relu" ]; then
     CMD="$CMD --sae_type jump_relu \
-        --l0_coefficient $L0_COEFFICIENT"
+        --lr_decay_steps $LR_DECAY_STEPS \
+        --l0_coefficient $L0_COEFFICIENT \
+        --l0_warm_up_steps $L0_WARM_UP_STEPS"
 fi
 
 if [ "$MODE" == "load_from_checkpoint" ]; then
