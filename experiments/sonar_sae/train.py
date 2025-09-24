@@ -548,7 +548,7 @@ trainer = L.Trainer(
     # Misc
     accelerator="gpu",
     devices=[args["device"]],
-    precision="bf16-mixed",
+    precision="32-true",
     accumulate_grad_batches=args["accumulate_grad_batches"],
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
