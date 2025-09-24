@@ -26,8 +26,8 @@ if [ "$SAE_TYPE" == "gated" ]; then
     CMD="$CMD --sae_type gated \
         --l1_coefficient $L1_COEFFICIENT \
         --l1_warm_up_steps 3_000"
-elif [ "$SAE_TYPE" == "batch_top_k" ]; then
-    CMD="$CMD --sae_type batch_top_k \
+elif [ "$SAE_TYPE" == "batchtopk" ]; then
+    CMD="$CMD --sae_type batchtopk \
         --k $K"
 elif [ "$SAE_TYPE" == "jump_relu" ]; then
     CMD="$CMD --sae_type jump_relu \

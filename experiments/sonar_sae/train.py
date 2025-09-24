@@ -103,7 +103,7 @@ if is_notebook():
     ]
 
     # mode=training
-    SAE_TYPE = "gated"  # "gated" or "batch_top_k"
+    SAE_TYPE = "gated"  # "gated" or "batchtopk"
 
     sys.argv += [
         # Training hyperparameters
@@ -142,7 +142,7 @@ if is_notebook():
             "--l1_warm_up_steps",
             "3_000",
         ]
-    elif SAE_TYPE == "batch_top_k":
+    elif SAE_TYPE == "batchtopk":
         sys.argv += [
             "--k",
             "96",
@@ -173,7 +173,7 @@ class ArgsConfig(TypedDict):
     then d_sae = 16 * 1024 = 16384
     """
 
-    sae_type: Literal["gated", "batch_top_k", "jump_relu"]
+    sae_type: Literal["gated", "batchtopk", "jump_relu"]
 
     total_training_batches: int
     """
@@ -250,7 +250,7 @@ def parse_args() -> ArgsConfig:
     parser.add_argument(
         "--sae_type",
         type=str,
-        choices=["gated", "batch_top_k", "jump_relu"],
+        choices=["gated", "batchtopk", "jump_relu"],
         help="Type of sparse autoencoder to use",
     )
 
@@ -416,7 +416,7 @@ if args["sae_type"] == "gated":
         # Misc
         device=f"cuda:{args['device']}",
     )
-elif args["sae_type"] == "batch_top_k":
+elif args["sae_type"] == "batchtopk":
     sae_cfg = BatchTopKTrainingSAEConfig(
         d_in=1024,
         d_sae=args["d_sae"],
@@ -523,7 +523,7 @@ wandb_logger.experiment.config.update(cfg.to_dict())
 # Set up trainer
 print("Setting up trainer...")
 
-if args["sae_type"] == "batch_top_k":
+if args["sae_type"] == "batchtopk":
     monitor = "model_performance_preservation.ce_loss_score"
     mode = "max"
 else:
