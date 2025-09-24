@@ -74,6 +74,7 @@ class DataModule(L.LightningDataModule):
             path="jasonrichdarmawan/nllb-200-6M-sample-embedding",
             split="train",
             streaming=False,
+            num_proc=8,
         ).with_format(type="torch")
 
         ds2 = (
@@ -81,6 +82,7 @@ class DataModule(L.LightningDataModule):
                 path="jasonrichdarmawan/nllb-primary-datasets-public-data-embedding",
                 split="train",
                 streaming=False,
+                num_proc=8,
             )
             .rename_columns(
                 {
