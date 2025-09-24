@@ -78,7 +78,7 @@ class DataModule(L.LightningDataModule):
 
         ds2 = (
             load_dataset(
-                path="jasonrichdarmawan/nllb-primary-datasets-embedding",
+                path="jasonrichdarmawan/nllb-primary-datasets-public-data-embedding",
                 split="train",
                 streaming=False,
             )

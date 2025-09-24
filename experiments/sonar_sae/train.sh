@@ -1,7 +1,10 @@
 #!/bin/bash
 
-CMD="python train.py \
-    --workspace $WORKSPACE \
+set -a
+source $WORKSPACE/text-autoencoders/.env
+set +a
+
+CMD="python $(dirname "$0")/train.py \
     --mode $MODE"
 
 CMD="$CMD --d_sae 16384 \
@@ -9,8 +12,8 @@ CMD="$CMD --d_sae 16384 \
     --lr $LR \
     --lr_warm_up_steps 3_000 \
     --lr_decay_steps 6_000 \
-    --batch_size 128 \
-    --accumulate_grad_batches 32 \
+    --batch_size 256 \
+    --accumulate_grad_batches 16 \
     \
     --device $CUDA_ID \
     \

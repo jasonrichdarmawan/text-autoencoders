@@ -9,13 +9,22 @@ try:
 except Exception:
     pass
 
-# %%
-# Use modified libraries
+# %% [markdown]
+"""
+Use modified libraries
 
-import sys
+or add in the `./project_directory/.env`
+```
+WORKSPACE=/workspace/jason
+HF_HOME=$WORKSPACE/.cache/huggingface
+PYTHONPATH=$WORKSPACE/SONAR:$WORKSPACE/SAELens
+```
+"""
 
-sys.path.insert(0, "/workspace/ALGOVERSE/UJR/jason/SONAR")
-sys.path.insert(0, "/workspace/ALGOVERSE/UJR/jason/SAELens")
+# import sys
+
+# sys.path.insert(0, "/workspace/ALGOVERSE/UJR/jason/SONAR")
+# sys.path.insert(0, "/workspace/ALGOVERSE/UJR/jason/SAELens")
 
 # %%
 # Library imports
@@ -71,21 +80,24 @@ from sonar.models.sonar_translation import SonarEncoderDecoderModel
 
 import torch
 
-torch.set_float32_matmul_precision("high")
+torch.set_float32_matmul_precision("highest")
 
 # %%
 # Setup for notebook or script execution
 if is_notebook():
-    WORKSPACE_DIR = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGER_NAME = "gated-detach-norm-aux-clip-16384-lr=1-e3-l1_coefficient=5e-5"
+    WORKSPACE_DIR = "/workspace/jason"
+    
+    WIDTH = 2**17
+    LR = 3e-4
 
-    mode = "load_from_checkpoint"  # "load_from_dict" | "load_from_checkpoint"
+    L1_COEFFICIENT = 1e-4
+    LOGGER_NAME = f"gated-detach-norm-aux-mse-clip-{str(WIDTH)}-lr={str(LR)}-l1_coefficient={str(L1_COEFFICIENT)}"
+
+    mode = "load_from_dict"  # "load_from_dict" | "load_from_checkpoint"
 
     sys.argv = [
         "main.py",
-        "--workspace",
-        WORKSPACE_DIR,
-        # "--debug",
+        "--debug",
         "--mode",
         mode,
     ]
@@ -98,21 +110,21 @@ if is_notebook():
         "--sae_type",
         SAE_TYPE,
         "--d_sae",
-        "16384",
+        str(WIDTH),
         "--total_training_batches",
         "30_000",
         "--lr",
-        "0.00005",
+        str(LR),
         "--lr_warm_up_steps",
         "3_000",
         "--lr_decay_steps",
         "6_000",
         "--batch_size",
-        "128",
+        "256",
         "--accumulate_grad_batches",
-        "32",
+        "16",
         "--device",
-        "3",
+        "0",
         # WANDB
         "--logger_dir",
         f"{WORKSPACE_DIR}/experiments/sonar_sae",
@@ -126,7 +138,7 @@ if is_notebook():
     if SAE_TYPE == "gated":
         sys.argv += [
             "--l1_coefficient",
-            "0.026",
+            str(L1_COEFFICIENT),
             "--l1_warm_up_steps",
             "3_000",
         ]
@@ -150,8 +162,6 @@ if is_notebook():
 
 # Argument parsing
 class ArgsConfig(TypedDict):
-    workspace: str
-
     debug: bool
 
     mode: Literal["load_from_dict"]
@@ -223,11 +233,6 @@ class ArgsConfig(TypedDict):
 def parse_args() -> ArgsConfig:
     parser = argparse.ArgumentParser()
 
-    parser.add_argument(
-        "--workspace",
-        type=str,
-        help="Workspace directory",
-    )
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -347,7 +352,7 @@ def parse_args() -> ArgsConfig:
         help="Path to checkpoint file",
     )
 
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
 
     return ArgsConfig(**vars(args))
 
