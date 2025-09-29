@@ -1,6 +1,10 @@
 #!/bin/bash
 
-CMD="python autointerp.py \
+set -a
+source $ENV
+set +a
+
+CMD="python $(dirname "$0")/autointerp.py \
     --mode $MODE \
     --result_filename $WORKSPACE/experiments/sonar_sae/autointerp_results/$LOGGER_ID/$CHECKPOINT_NAME.json"
 

@@ -309,6 +309,7 @@ if args["mode"] == "autointerp":
         cfg=cfg,
         data_module=data_module,
         model=lit_model,
+        base_url=os.getenv("OPENAI_BASE_URL"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 

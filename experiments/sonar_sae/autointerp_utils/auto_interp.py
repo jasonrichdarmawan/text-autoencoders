@@ -48,11 +48,13 @@ class AutoInterp:
         cfg: AutoInterpConfig,
         data_module: DataModule,
         model: LitModel,
+        base_url: str,
         api_key: str,
     ):
         self.cfg = cfg
         self.data_module = data_module
         self.model = model
+        self.base_url = base_url
         self.api_key = api_key
 
     async def run(
@@ -189,8 +191,7 @@ class AutoInterp:
                 dim=0,
             )
             with t.no_grad():
-                with t.autocast(device_type="cuda", dtype=t.bfloat16):
-                    acts = self.model.sae.encode(x=embedding)[:, self.cfg.latents]
+                acts = self.model.sae.encode(x=embedding)[:, self.cfg.latents]
 
                 for i, latent in enumerate(self.cfg.latents):
                     # Get top activations from this batch,
@@ -406,16 +407,16 @@ Here are the sentences to evaluate:
             assert message["role"] in ["system", "user", "assistant"]
 
         client = AsyncOpenAI(
-            base_url="https://openrouter.ai/api/v1",
+            base_url=self.base_url,
             api_key=self.api_key,
         )
 
         result = await client.chat.completions.create(
             # model="gpt-4o-mini",
             # model="google/gemini-2.5-pro",
-            # model="openai/gpt-oss-120b",
+            model="openai/gpt-oss-120b",
             # model="deepseek/deepseek-r1-0528",
-            model="deepseek/deepseek-chat-v3.1",
+            # model="deepseek/deepseek-chat-v3.1",
             messages=messages,
             n=n_completions,
             max_tokens=max_tokens,

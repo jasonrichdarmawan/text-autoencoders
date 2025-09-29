@@ -43,7 +43,7 @@ class DataModule(L.LightningDataModule):
         self.batch_size = batch_size
 
         # Shuffling hyperparameters
-        self.num_workers = 4
+        self.num_workers = 16
         self.prefetch_factor = 64
 
     def setup(self, stage=None):

@@ -83,7 +83,7 @@ from sae_lens import (
 # Parse arguments
 
 if is_notebook():
-    WORKSPACE = "/workspace/ALGOVERSE/UJR/jason/jason-ujr-1"
+    WORKSPACE = "/workspace/jason/jason-ujr-1"
     LOGGER_ID = "g97mb3sb"
     CHECKPOINT_NAME = "epoch=45-step=240991"
     SAE_TYPE = "batchtopk"
@@ -98,13 +98,13 @@ if is_notebook():
         "--cudaId",
         0,
         f"--autointerp_results_filename",
-        f"{WORKSPACE}/experiments/sonar_sae/autointerp_results/{LOGGER_ID}/{CHECKPOINT_NAME}-nllb-200-6M-sample-embedding.json",
+        f"{WORKSPACE}/experiments/sonar_sae/autointerp_results/{LOGGER_ID}/{CHECKPOINT_NAME}.json",
     ]
 
     if SAE_TYPE == "batchtopk":
         sys.argv += [
             "--k",
-            "96",
+            "64",
         ]
 
 
@@ -374,7 +374,7 @@ print_autointerp_results(
 # %%
 # Show details for specific latents
 
-fired_latent_detail_indices = [11508]
+fired_latent_detail_indices = [1]
 
 print(
     json.dumps(
