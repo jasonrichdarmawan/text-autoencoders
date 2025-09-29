@@ -409,8 +409,9 @@ if args["mode"] == "push_to_hub":
     all_ds = all_ds.shuffle(seed=42)
 
     all_ds.push_to_hub(
-        repo_id="jasonrichdarmawan/nllb-primary-datasets-embedding",
+        repo_id="jasonrichdarmawan/nllb-primary-datasets-public-data-embedding",
         split="train",
+        num_proc=12,
     )
 
 # %%

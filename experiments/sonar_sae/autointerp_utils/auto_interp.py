@@ -173,7 +173,7 @@ class AutoInterp:
             iterable=range(total_batches), desc="Collecting activations data"
         ):
             data = next(iterable)[0]
-            text = (
+            texts = (
                 data["nllb_200_6m_sample_embedding"]["text1"]
                 + data["nllb_primary_datasets_embedding"]["text1"]
             )
@@ -197,12 +197,12 @@ class AutoInterp:
                     # and filter down to the data we'll actually
                     # include
                     top_indices = get_k_largest_indices(
-                        texts=text,
+                        texts=texts,
                         acts=acts[:, i],
                         k=self.cfg.n_top_ex_for_generation,
                         no_overlap=self.cfg.no_overlap,
                     )
-                    top_texts = [text[idx] for idx in top_indices]
+                    top_texts = [texts[idx] for idx in top_indices]
                     top_values = acts[top_indices, i]
                     latent_data[latent]["top_texts"] += top_texts
                     latent_data[latent]["top_values"] = t.cat(
@@ -215,7 +215,7 @@ class AutoInterp:
                         all_rand_indices[:, i, 0] == batch, i, 1
                     ]
                     latent_data[latent]["rand_texts"] += [
-                        text[idx] for idx in rand_indices.tolist()
+                        texts[idx] for idx in rand_indices.tolist()
                     ]
                     latent_data[latent]["rand_acts"] = t.cat(
                         (latent_data[latent]["rand_acts"], acts[rand_indices, i]), dim=0
@@ -461,7 +461,7 @@ def get_k_largest_indices(
     Partial code from https://arena-chapter1-transformer-interp.streamlit.app/[1.3.2]_Interpretability_with_SAEs#exercise-implement-autointerp-scoring
     """
     assert len(texts) == acts.shape[0]
-    assert k <= len(texts)
+    assert k <= len(texts), f"Cannot get {k} largest indices from {len(texts)} texts"
 
     if not no_overlap:
         return acts.topk(k=k).indices.tolist()

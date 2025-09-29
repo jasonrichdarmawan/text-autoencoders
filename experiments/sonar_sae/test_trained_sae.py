@@ -65,24 +65,24 @@ from sae_lens import (
 # Parse arguments
 
 if is_notebook():
-    WORKSPACE = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGER_ID = "mffcsqri"
-    SAE_TYPE = "jumprelu"
+    WORKSPACE = "/workspace/ALGOVERSE/UJR/jason/jason-ujr-1"
+    LOGGER_ID = "g97mb3sb"
+    SAE_TYPE = "batchtopk"
     # CHECKPOINT_NAME = "last"
-    CHECKPOINT_NAME = "epoch=9-step=29544"
+    CHECKPOINT_NAME = "epoch=45-step=240991"
     sys.argv = [
         "test_trained_sae.py",
         "--sae_type",
         SAE_TYPE,
         # Hyperparameters
         "--d_sae",
-        "16384",
+        str(2**17),
         # Checkpoint
         "--checkpoint_filename",
         f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGER_ID}/{CHECKPOINT_NAME}.ckpt",
         # Misc
         "--device",
-        "cuda:1",
+        "cuda:0",
         # "cpu",
     ]
 
@@ -184,6 +184,8 @@ elif args["sae_type"] == "jumprelu":
         normalize_activations="expected_average_only_in",  # TODO: implementation
         device=args["device"],
     )
+else:
+    raise ValueError(f"Unknown sae_type: {args['sae_type']}")
 
 cfg = LanguageModelSAERunnerConfig(
     sae=sae_cfg,
@@ -261,7 +263,14 @@ reconstructed_texts = lit_model.decode_embedding(
     embeddings=embeddings,
     target_lang=langs,
 )
-print("reconstructed_texts:", reconstructed_texts)
+print(
+    tabulate(
+        tabular_data=[
+            ["text"] + texts,
+            ["reconstructed"] + reconstructed_texts,
+        ]
+    )
+)
 
 # %%
 # Test

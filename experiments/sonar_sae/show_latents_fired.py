@@ -44,38 +44,68 @@ from sae_lens import (
     TrainingSAEConfig,
 )
 
-import torch as t
+import torch
 from torch import Tensor
 
 import json
+
+import fairseq2
+fairseq2.setup_fairseq2()
+
+from fairseq2.data.text.tokenizers import TextTokenizer, get_text_tokenizer_hub
 
 from sonar.inference_pipelines.text import (
     TextToEmbeddingModelPipeline,
     EmbeddingToTextModelPipeline,
 )
 
+from sonar.models.sonar_translation import SonarEncoderDecoderModel
+
+from sonar.models.sonar_text import (
+    get_sonar_text_decoder_hub,
+    get_sonar_text_encoder_hub,
+)
+
 from tabulate import tabulate
 
 from jaxtyping import Float
+
+from sae_lens import (
+    TrainingSAE,
+    TrainingSAEConfig,
+    GatedTrainingSAEConfig,
+    BatchTopKTrainingSAEConfig,
+    JumpReLUTrainingSAEConfig,
+    LanguageModelSAERunnerConfig,
+)
 
 # %%
 # Parse arguments
 
 if is_notebook():
-    WORKSPACE = "/workspace/ALGOVERSE/UJR/jason"
-    LOGGER_ID = "by40bhbn"
-    CHECKPOINT_NAME = "epoch=9-step=30000"
+    WORKSPACE = "/workspace/ALGOVERSE/UJR/jason/jason-ujr-1"
+    LOGGER_ID = "g97mb3sb"
+    CHECKPOINT_NAME = "epoch=45-step=240991"
+    SAE_TYPE = "batchtopk"
     sys.argv = [
         "show_latents_fired.py",
         "--checkpoint_filename",
         f"{WORKSPACE}/experiments/sonar_sae/checkpoints/{LOGGER_ID}/{CHECKPOINT_NAME}.ckpt",
         "--d_sae",
-        "16384",
+        str(2**17),
+        "--sae_type",
+        SAE_TYPE,
         "--cudaId",
-        "2",
+        0,
         f"--autointerp_results_filename",
         f"{WORKSPACE}/experiments/sonar_sae/autointerp_results/{LOGGER_ID}/{CHECKPOINT_NAME}-nllb-200-6M-sample-embedding.json",
     ]
+
+    if SAE_TYPE == "batchtopk":
+        sys.argv += [
+            "--k",
+            "96",
+        ]
 
 
 def parse_args():
@@ -86,12 +116,28 @@ def parse_args():
         required=True,
         help="Path to the model checkpoint file.",
     )
+
     parser.add_argument(
         "--d_sae",
         type=int,
         required=True,
         help="Dimensionality of the SAE latent space.",
     )
+
+    parser.add_argument(
+        "--sae_type",
+        type=str,
+        required=True,
+        choices=["gated", "batchtopk", "jumprelu"],
+        help="Type of the SAE model.",
+    )
+
+    parser.add_argument(
+        "--k",
+        type=int,
+        help="Top-k for BatchTopK SAE",
+    )
+
     parser.add_argument(
         "--cudaId",
         type=str,
@@ -118,46 +164,88 @@ data_module = DataModule(
 data_module.setup("fit")
 
 # %%
+# Load model
+
+tokenizer_hub = get_text_tokenizer_hub()
+encoder_hub = get_sonar_text_encoder_hub()
+encoder = encoder_hub.load(
+    "text_sonar_basic_encoder", device=torch.device(f"cuda:{args['cudaId']}")
+)
+encoder_tokenizer = tokenizer_hub.load("text_sonar_basic_encoder")
+decoder_hub = get_sonar_text_decoder_hub()
+decoder = decoder_hub.load(
+    "text_sonar_basic_decoder", device=torch.device(f"cuda:{args['cudaId']}")
+)
+decoder_tokenizer = tokenizer_hub.load("text_sonar_basic_decoder")
+
+model = SonarEncoderDecoderModel(encoder=encoder, decoder=decoder)
+
+# %%
 # Set up SAE model
 
-sae_cfg = GatedTrainingSAEConfig(
-    d_in=1024,
-    d_sae=args["d_sae"],
-    apply_b_dec_to_input=True,
-    normalize_activations="none",
-    device=f"cuda:{args['cudaId']}",
+if args["sae_type"] == "gated":
+    sae_cfg = GatedTrainingSAEConfig(
+        d_in=1024,
+        d_sae=args["d_sae"],
+        apply_b_dec_to_input=True,
+        normalize_activations="none",  # TODO: implementation
+        device=f"cuda:{args['cudaId']}",
+    )
+elif args["sae_type"] == "batchtopk":
+    sae_cfg = BatchTopKTrainingSAEConfig(
+        d_in=1024,
+        d_sae=args["d_sae"],
+        apply_b_dec_to_input=True,
+        normalize_activations="none",  # TODO: implementation
+        k=args["k"],
+        device=f"cuda:{args['cudaId']}",
+    )
+elif args["sae_type"] == "jumprelu":
+    sae_cfg = JumpReLUTrainingSAEConfig(
+        d_in=1024,
+        d_sae=args["d_sae"],
+        apply_b_dec_to_input=True,
+        normalize_activations="expected_average_only_in",  # TODO: implementation
+        device=f"cuda:{args['cudaId']}",
+    )
+
+cfg = LanguageModelSAERunnerConfig(
+    sae=sae_cfg,
 )
 
 sae = TrainingSAE.from_dict(
-    config_dict=TrainingSAEConfig.from_dict(sae_cfg.to_dict()).to_dict(),
+    config_dict=TrainingSAEConfig.from_dict(cfg.get_training_sae_cfg_dict()).to_dict()
 )
 
 # %%
 # Load SAE model
 
-model = LitModel.load_from_checkpoint(
+lit_model = LitModel.load_from_checkpoint(
     checkpoint_path=args["checkpoint_filename"],
     map_location=f"cuda:{args['cudaId']}",
+    model=model,
+    encoder_tokenizer=encoder_tokenizer,
+    decoder_tokenizer=decoder_tokenizer,
     sae=sae,
 )
 
 # Disable randomness, dropout, etc
-model.eval()
+lit_model.eval()
 
 # %%
 # Load SONAR embedding to text model
 
-text2vec_model = TextToEmbeddingModelPipeline(
-    encoder="text_sonar_basic_encoder",
-    tokenizer="text_sonar_basic_encoder",
-    device=t.device(f"cuda:{args['cudaId']}"),
-)
+# text2vec_model = TextToEmbeddingModelPipeline(
+#     encoder="text_sonar_basic_encoder",
+#     tokenizer="text_sonar_basic_encoder",
+#     device=t.device(f"cuda:{args['cudaId']}"),
+# )
 
-vec2text_model = EmbeddingToTextModelPipeline(
-    decoder="text_sonar_basic_decoder",
-    tokenizer="text_sonar_basic_decoder",
-    device=t.device(f"cuda:{args['cudaId']}"),
-)
+# vec2text_model = EmbeddingToTextModelPipeline(
+#     decoder="text_sonar_basic_decoder",
+#     tokenizer="text_sonar_basic_decoder",
+#     device=t.device(f"cuda:{args['cudaId']}"),
+# )
 
 # %%
 # Load autointerp results
@@ -172,6 +260,42 @@ except FileNotFoundError as e:
 # %%
 # Inference with seen data
 
+@torch.no_grad()
+def process_embedding_with_sae(
+    lit_model: LitModel,
+    embedding: Float[Tensor, "batch d_in"], 
+    source_langs: list[str]
+):
+    feature_acts, _ = lit_model.sae.encode_with_hidden_pre(x=embedding)
+    fired = (feature_acts > 0).float()  # shape [batch_size, d_sae]
+
+    fired_indices = torch.nonzero(fired)  # shape [num_fired, 2]
+    # Group by sample
+    fired_latents_per_sample = [
+        fired_indices[fired_indices[:, 0] == i][:, 1].tolist()
+        for i in range(fired.shape[0])
+    ]
+
+    sae_out = lit_model.sae.decode(feature_acts)
+    reconstructed_texts = lit_model.decode_embedding(
+        embeddings=torch.concat(
+            [embedding, embedding, sae_out, sae_out],
+            dim=0,
+        ),
+        target_lang=(
+            source_langs 
+            + ["eng_Latn"] * embedding.shape[0] 
+            + source_langs 
+            + ["eng_Latn"] * sae_out.shape[0]
+        ),
+    )
+
+    return {
+        "feature_acts": feature_acts,
+        "fired_latents_per_sample": fired_latents_per_sample,
+        "reconstructed_texts": reconstructed_texts,
+    }
+
 iterable = iter(data_module.train_dataloader())
 
 data = next(iterable)[0]
@@ -183,48 +307,15 @@ source_langs = (
     data["nllb_200_6m_sample_embedding"]["lang1"]
     + data["nllb_primary_datasets_embedding"]["lang1"]
 )
-embedding = t.concat(
+embedding = torch.concat(
     (
-        data["nllb_200_6m_sample_embedding"]["embedding1"].to(model.sae.device),
-        data["nllb_primary_datasets_embedding"]["embedding1"].to(model.sae.device),
+        data["nllb_200_6m_sample_embedding"]["embedding1"].to(lit_model.sae.device),
+        data["nllb_primary_datasets_embedding"]["embedding1"].to(lit_model.sae.device),
     ),
     dim=0,
 )
 
-
-@t.no_grad()
-def process_embedding_with_sae(
-    embedding: Float[Tensor, "batch d_in"], source_langs: list[str]
-):
-    with t.autocast(device_type="cuda", dtype=t.bfloat16):
-        feature_acts, _ = model.sae.encode_with_hidden_pre(x=embedding)
-        fired = (feature_acts > 0).float()  # shape [batch_size, d_sae]
-
-        fired_indices = t.nonzero(fired)  # shape [num_fired, 2]
-        # Group by sample
-        fired_latents_per_sample = [
-            fired_indices[fired_indices[:, 0] == i][:, 1].tolist()
-            for i in range(fired.shape[0])
-        ]
-
-        sae_out = model.sae.decode(feature_acts)
-        reconstructed_texts = vec2text_model.predict(
-            inputs=t.concat(
-                [sae_out, sae_out],
-                dim=0,
-            ),
-            target_lang=["eng_Latn"] * sae_out.shape[0] + source_langs,
-            batch_size=8,
-        )
-
-        return {
-            "feature_acts": feature_acts,
-            "fired_latents_per_sample": fired_latents_per_sample,
-            "reconstructed_texts": reconstructed_texts,
-        }
-
-
-results = process_embedding_with_sae(embedding=embedding, source_langs=source_langs)
+results = process_embedding_with_sae(lit_model=lit_model, embedding=embedding, source_langs=source_langs)
 feature_acts = results["feature_acts"]
 fired_latents_per_sample = results["fired_latents_per_sample"]
 reconstructed_texts = results["reconstructed_texts"]
@@ -234,24 +325,16 @@ reconstructed_texts = results["reconstructed_texts"]
 # Inference with simple texts
 
 texts = [
-    "cat",
-    "dog",
-    "and",
-    "cat and dog",
-    "dog and cat",
-    "the cat",
-    "the dog",
-    "the cat and the dog",
-    "the dog and the cat",
+    "Mice chase cats."
 ]
 source_langs = ["eng_Latn"] * len(texts)
-embedding = text2vec_model.predict(
-    input=texts,
-    source_lang=source_langs,
-    target_device=t.device(f"cuda:{args['cudaId']}"),
+tokens, padding_mask = lit_model.tokenize_text(texts=texts, langs=source_langs)
+embedding = lit_model.encode_text(
+    seqs=tokens,
+    padding_mask=padding_mask,
 )
 
-results = process_embedding_with_sae(embedding=embedding, source_langs=source_langs)
+results = process_embedding_with_sae(lit_model=lit_model, embedding=embedding, source_langs=source_langs)
 feature_acts = results["feature_acts"]
 fired_latents_per_sample = results["fired_latents_per_sample"]
 reconstructed_texts = results["reconstructed_texts"]
@@ -263,18 +346,20 @@ reconstructed_texts = results["reconstructed_texts"]
 batch_index = 0
 
 text = texts[batch_index]
-reconstructed_text_eng_Latn = reconstructed_texts[batch_index]
-reconstructed_text_source_lang = reconstructed_texts[
-    len(reconstructed_texts) // 2 + batch_index
-]
+reconstructed_without_sae_source_lang = reconstructed_texts[batch_index]
+reconstructed_without_sae_eng_Latn = reconstructed_texts[len(texts) + batch_index]
+reconstructed_with_sae_source_lang = reconstructed_texts[len(texts) * 2 + batch_index]
+reconstructed_with_sae_eng_Latn = reconstructed_texts[len(texts) * 3 + batch_index]
 fired_latents = fired_latents_per_sample[batch_index]
 
 print(
     tabulate(
         tabular_data=[
             ["Text"] + [text],
-            ["Reconstructed with sae (source lang)"] + [reconstructed_text_source_lang],
-            ["Reconstructed with sae (eng_Latn)"] + [reconstructed_text_eng_Latn],
+            ["Reconstructed without sae (source lang)"] + [reconstructed_without_sae_source_lang],
+            ["Reconstructed without sae (eng_Latn)"] + [reconstructed_without_sae_eng_Latn],
+            ["Reconstructed with sae (source lang)"] + [reconstructed_with_sae_source_lang],
+            ["Reconstructed with sae (eng_Latn)"] + [reconstructed_with_sae_eng_Latn],
         ]
     )
 )

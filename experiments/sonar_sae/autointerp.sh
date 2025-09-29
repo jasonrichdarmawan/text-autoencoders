@@ -2,7 +2,7 @@
 
 CMD="python autointerp.py \
     --mode $MODE \
-    --result_filename $WORKSPACE/experiments/sonar_sae/autointerp_results/$LOGGER_ID/$CHECKPOINT_NAME-nllb-200-6M-sample-embedding.json"
+    --result_filename $WORKSPACE/experiments/sonar_sae/autointerp_results/$LOGGER_ID/$CHECKPOINT_NAME.json"
 
 if [[ -n "$NUM_SHARDS" && -n "$SHARD_IDX" ]]; then
     # SHARD_SIZE=$((D_SAE / NUM_SHARDS))
@@ -34,8 +34,17 @@ if [ "$MODE" == "autointerp" ]; then
         --batch_size 4096 \
         --latents $LATENTS_LIST \
         --checkpoint_filename $WORKSPACE/experiments/sonar_sae/checkpoints/$LOGGER_ID/$CHECKPOINT_NAME.ckpt \
-        --device cuda:2 \
+        --device cuda:0 \
         --max_concurrent 128"
+
+    if [ "$SAE_TYPE" == "gated" ]; then
+        CMD="$CMD --sae_type gated"
+    elif [ "$SAE_TYPE" == "batchtopk" ]; then
+        CMD="$CMD --sae_type batchtopk \
+            --k $K"
+    elif [ "$SAE_TYPE" == "jump_relu" ]; then
+        CMD="$CMD --sae_type jump_relu"
+    fi
 fi
 
 eval $CMD
